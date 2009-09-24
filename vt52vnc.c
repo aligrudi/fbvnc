@@ -10,6 +10,7 @@
 #define byterate 1920
 
 #include "vt52vnc.h"
+#include "draw.h"
 
 int main(int argc, char * argv[])
 {
@@ -19,7 +20,6 @@ int main(int argc, char * argv[])
 	struct termios ti1, ti2;
 	fd_set sel_in;
 	struct timeval tv;
-	unsigned long stat;
 	int already_requested = 0;
 	int must_draw = 0;
 	int must_redraw = 1;
@@ -28,6 +28,7 @@ int main(int argc, char * argv[])
 		host = argv[1];
 	if (argc>=3)
 		port = atoi(argv[2]);
+	fb_init();
 	fd = vncproto_init(host, port);
 	if(fd==-1)
 		return -1;
@@ -60,9 +61,8 @@ int main(int argc, char * argv[])
 					must_draw=must_redraw;
 					must_redraw=0;
 				}
-				stat = get_stat();
-				tv.tv_sec = stat/byterate;
-				tv.tv_usec = (stat - tv.tv_sec*byterate)*1000000/byterate;
+				tv.tv_sec = 0;
+				tv.tv_usec = 200000;
 			} else {
 				tv.tv_sec = 0;
 				tv.tv_usec = 200000;
@@ -81,6 +81,7 @@ int main(int argc, char * argv[])
 				break;
 		}
 	}
+	fb_free();
 	tcsetattr(0, TCSANOW, &ti1);
 #define W(a,b) write((a),(b),strlen(b))
 	W(1, "\n\x1bH\x1bJ");

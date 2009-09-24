@@ -12,75 +12,19 @@
 #include <string.h>
 
 #include "vt52vnc.h"
+#include "draw.h"
+
+#define MAXRESOL		(1 << 21)
 
 /* vnc part */
 CARD16 fb_width = 0;
 CARD16 fb_height = 0;
 
-/* graphics part */
-t_kanal kan;
-
-/* lowest 2 bits in videoram are used for actual and future videoram.
- * they are changing their roles by changing the vramactive
- * variable */
-CARD8 vram[VT52_YMAX * VT52_XMAX];
-int deltabuf[] = {0,1,1,0};
-int joinbuf2[] = {0,0,3,3};
-#define VRAM(x,y) (vram[(y)*VT52_XMAX+(x)])
-#define DELTA(x,y) (deltabuf[VRAM((x),(y))&3])
-#define JOIN2(x,y) (joinbuf2[(VRAM(i,j)&2)])
 /* and buffer for screen updates */
-CARD8 updates[VT52_YMAX * VT52_XMAX];
-#define RED(x) ((x)&3)
-#define GREEN(x) (((x)>>2)&7)
-#define BLUE(x) (((x)>>5)&7)
-
-/* code */
-void update_vram(CARD8 * buffer, rfbRectangle r)
-{
-	int i, j;
-
-	for(i=0; i<r.w; i++)
-	for(j=0; j<r.h; j++)
-		if (GREEN(buffer[i+j*r.w]) & 1)
-			VRAM(i+r.x,j+r.y) |= 2;
-		else
-			VRAM(i+r.x,j+r.y) &= ~2;
-}
+CARD8 updates[MAXRESOL];
 
 int drawdelta(void) {
-	int i,j,k;
-#define XSTEP 128
-#define YSTEP 64
-	static int xphase=0, yphase=VT52_YMAX-YSTEP;
-
-	for (j=yphase; j<yphase+YSTEP; j++) {
-		k = -1;
-		for (i=xphase; i<xphase+XSTEP; i++)
-			if (DELTA(i,j) && k==-1) {
-				k=i;
-			} else if (!DELTA(i,j) && k!=-1) {
-				gline(&kan,k,VT52_YMAX-j-1,i-1,VT52_YMAX-j-1);
-				k=-1;
-			}
-		if (k!=-1)
-			gline(&kan,k,VT52_YMAX-j-1,i-1,VT52_YMAX-j-1);
-	}
-	gflush(&kan);
-
-	for (i=xphase; i<xphase+XSTEP; i++)
-	for (j=yphase; j<yphase+YSTEP; j++)
-			VRAM(i,j) = JOIN2(i,j);
-
-	xphase = (xphase+XSTEP)%VT52_XMAX;
-	if (!xphase) {
-		yphase -= YSTEP;
-		if (yphase < 0) {
-			yphase = VT52_YMAX - YSTEP;
-			return 0;
-		}
-	}
-	return 1;
+	return 0;
 }
 
 int vncproto_init(char * addr, int port)
@@ -165,11 +109,11 @@ int vncproto_init(char * addr, int port)
 	read(servsock, &serverinit, sizeof(serverinit));
 
 	fb_width = ntohs(serverinit.framebufferWidth);
-	if (fb_width > VT52_XMAX)
-		fb_width = VT52_XMAX;
+	if (fb_width > fb_cols())
+		fb_width = fb_cols();
 	fb_height = ntohs(serverinit.framebufferHeight);
-	if (fb_height > VT52_YMAX)
-		fb_height = VT52_YMAX;
+	if (fb_height > fb_rows())
+		fb_height = fb_rows();
 
 	i32 = ntohl(serverinit.nameLength);
 	for (i=0; i<i32; i++)
@@ -195,19 +139,6 @@ int vncproto_init(char * addr, int port)
 	encodingsmsgp->nEncodings = htons(1);
 	*((CARD32 *)((void *)(encodingsmsgp) + sizeof(rfbSetEncodingsMsg))) = htonl(rfbEncodingRaw);
 	write(servsock, encodingsmsgp, sizeof(*encodingsmsgp)+sizeof(CARD32));
-
-
-	memset(vram, 0, VT52_YMAX * VT52_XMAX);
-
-	kan.pos = 0;
-	greset(&kan);
-	gflush(&kan);
-	/* uncomment this, if you want to use the different transferr speed as default */
-	// sleep(10);
-	gset_scaling(&kan, 0, 0);
-	gset_attrib(&kan, GA_XOR);
-	gflush(&kan);
-
 	return servsock;
 }
 
@@ -225,6 +156,19 @@ int request_vnc_refresh(int fd)
 
 	write(fd, &updreq, sizeof(updreq));
 	return 0;
+}
+
+void update_fb(CARD8 *buffer, rfbRectangle r)
+{
+	fbval_t slice[1 << 14];
+	int i, j;
+	for (i = 0; i < r.h; i++) {
+		for (j = 0; j < r.w; j++) {
+			unsigned char *p = &buffer[i * r.w + j];
+			slice[j] = fb_color(*p, *p, *p);
+		}
+		fb_set(r.y + i, r.x, slice, r.w);
+	}
 }
 
 int parse_vnc_in(int fd)
@@ -252,7 +196,6 @@ int parse_vnc_in(int fd)
 	}
 	switch (vomsgp->type) {
 		case rfbBell:
-			gputc(&kan, '\x07'); gflush(&kan);
 			break;
 
 		case rfbFramebufferUpdate:
@@ -279,7 +222,7 @@ int parse_vnc_in(int fd)
 						return 0;
 					i+=j;
 				}
-				update_vram(updates,uprect.r);
+				update_fb(updates,uprect.r);
 			}
 			break;
 	}
@@ -288,7 +231,7 @@ int parse_vnc_in(int fd)
 
 int parse_kbd_in(int kbdfd, int fd)
 {
-	rfbKeyEventMsg ke;
+	static rfbKeyEventMsg ke;
 	static rfbPointerEventMsg me = {rfbPointerEvent, 0, 0, 0};
 	static int mouse_on = -1; static int mouse_factor = 1;
 #define VT_CHAR	0
@@ -300,8 +243,8 @@ int parse_kbd_in(int kbdfd, int fd)
 	int i, j, k;
 
 	if (mouse_on == -1) {
-		me.x = htons(VT52_XMAX/2);
-		me.y = htons(VT52_YMAX/2);
+		me.x = htons(fb_cols() / 2);
+		me.y = htons(fb_rows() / 2);
 		mouse_on = 0;
 		ke.type = rfbKeyEvent;
 	}
@@ -340,10 +283,10 @@ int parse_kbd_in(int kbdfd, int fd)
 							me.x = htons(0);
 					}
 					if (buf[i] == '6' || buf[i] == '9' || buf[i] == '3') {
-						if (ntohs(me.x)+mouse_factor < VT52_XMAX-1)
+						if (ntohs(me.x)+mouse_factor < fb_cols()-1)
 							me.x = htons(ntohs(me.x)+mouse_factor);
 						else
-							me.x = htons(VT52_XMAX-1);
+							me.x = htons(fb_cols()-1);
 					}
 					if (buf[i] == '7' || buf[i] == '8' || buf[i] == '9') {
 						if (ntohs(me.y)>mouse_factor)
@@ -352,10 +295,10 @@ int parse_kbd_in(int kbdfd, int fd)
 							me.y = htons(0);
 					}
 					if (buf[i] == '1' || buf[i] == '2' || buf[i] == '3') {
-						if (ntohs(me.y)+mouse_factor < VT52_YMAX-1)
+						if (ntohs(me.y)+mouse_factor < fb_rows()-1)
 							me.y = htons(ntohs(me.y)+mouse_factor);
 						else
-							me.y = htons(VT52_YMAX-1);
+							me.y = htons(fb_rows()-1);
 					}
 
 					if (buf[i]>='1' && buf[i]<='9') {

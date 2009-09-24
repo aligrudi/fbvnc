@@ -6,7 +6,7 @@ AS = as
 ASOPTS =
 LD = ld
 LDOPTS =
-OBJS= graphics.o vncproto.o vt52vnc.o
+OBJS= vncproto.o vt52vnc.o draw.o
 
 all:	$(OBJS)
 	$(CC) $(CCOPTS) -o vt52vnc $(OBJS)
