@@ -120,7 +120,7 @@ int vncproto_init(char * addr, int port)
 		perror("Cannot create socket");
 		return -1;
 	}
-	if (connect(servsock, (struct sockaddr_in *)&si, sizeof(si)) < 0) {
+	if (connect(servsock, (struct sockaddr *)&si, sizeof(si)) < 0) {
 		perror("Cannot connect");
 		close(servsock);
 		return -1;
@@ -333,26 +333,30 @@ int parse_kbd_in(int kbdfd, int fd)
 							mouse_factor = 1;
 						break;
 					}
-					if (buf[i] == '4' || buf[i] == '7' || buf[i] == '1')
+					if (buf[i] == '4' || buf[i] == '7' || buf[i] == '1') {
 						if (ntohs(me.x)>mouse_factor)
 							me.x = htons(ntohs(me.x)-mouse_factor);
 						else
 							me.x = htons(0);
-					if (buf[i] == '6' || buf[i] == '9' || buf[i] == '3')
+					}
+					if (buf[i] == '6' || buf[i] == '9' || buf[i] == '3') {
 						if (ntohs(me.x)+mouse_factor < VT52_XMAX-1)
 							me.x = htons(ntohs(me.x)+mouse_factor);
 						else
 							me.x = htons(VT52_XMAX-1);
-					if (buf[i] == '7' || buf[i] == '8' || buf[i] == '9')
+					}
+					if (buf[i] == '7' || buf[i] == '8' || buf[i] == '9') {
 						if (ntohs(me.y)>mouse_factor)
 							me.y = htons(ntohs(me.y)-mouse_factor);
 						else
 							me.y = htons(0);
-					if (buf[i] == '1' || buf[i] == '2' || buf[i] == '3')
+					}
+					if (buf[i] == '1' || buf[i] == '2' || buf[i] == '3') {
 						if (ntohs(me.y)+mouse_factor < VT52_YMAX-1)
 							me.y = htons(ntohs(me.y)+mouse_factor);
 						else
 							me.y = htons(VT52_YMAX-1);
+					}
 
 					if (buf[i]>='1' && buf[i]<='9') {
 						write(fd, &me, sizeof(me));
@@ -416,6 +420,7 @@ int parse_kbd_in(int kbdfd, int fd)
 				}
 				vt_state=VT_CHAR; break;
 			default:
+				break;
 		}
 		if (k>0) {
 			ke.down = 1;
