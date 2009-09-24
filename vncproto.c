@@ -108,6 +108,7 @@ int vncproto_init(char * addr, int port)
 
 	read(servsock, &serverinit, sizeof(serverinit));
 
+	fb_init();
 	fb_width = ntohs(serverinit.framebufferWidth);
 	if (fb_width > fb_cols())
 		fb_width = fb_cols();
@@ -141,6 +142,12 @@ int vncproto_init(char * addr, int port)
 		sizeof(rfbSetEncodingsMsg))) = htonl(rfbEncodingRaw);
 	write(servsock, encodingsmsgp, sizeof(*encodingsmsgp)+sizeof(CARD32));
 	return servsock;
+}
+
+int vncproto_free(void)
+{
+	fb_free();
+	return 0;
 }
 
 int request_vnc_refresh(int fd)

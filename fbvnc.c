@@ -7,40 +7,56 @@
 #include <unistd.h>
 #include <string.h>
 
-#define byterate 1920
-
 #include "fbvnc.h"
-#include "draw.h"
+
+static void term_setup(struct termios *ti)
+{
+	struct termios termios;
+	char *hide = "\x1b[?25l";
+	char *clear = "\x1b[2J\x1b[H";
+	char *msg = "\t\t\t*** fbvnc ***\r\n";
+
+	write(STDIN_FILENO, hide, strlen(hide));
+	write(STDOUT_FILENO, clear, strlen(clear));
+	write(STDOUT_FILENO, msg, strlen(msg));
+	tcgetattr (0, &termios);
+	*ti = termios;
+	cfmakeraw(&termios);
+	tcsetattr(0, TCSANOW, &termios);
+}
+
+static void term_cleanup(struct termios *ti)
+{
+	char *show = "\x1b[?25h";
+	tcsetattr(0, TCSANOW, ti);
+	write(STDIN_FILENO, show, strlen(show));
+}
 
 int main(int argc, char * argv[])
 {
 	int port = DEF_PORT;
 	char * host = "127.0.0.1";
 	int fd, retval;
-	struct termios ti1, ti2;
 	fd_set sel_in;
 	struct timeval tv;
 	int already_requested = 0;
 	int must_draw = 0;
 	int must_redraw = 1;
+	struct termios ti;
 
 	if (argc>=2)
 		host = argv[1];
 	if (argc>=3)
 		port = atoi(argv[2]);
-	fb_init();
 	fd = vncproto_init(host, port);
 	if(fd==-1)
 		return -1;
 
-	tcgetattr (0, &ti1);
-	ti2 = ti1;
-	cfmakeraw(&ti2);
-
-	if (request_vnc_refresh(fd) == -1)
+	term_setup(&ti);
+	if (request_vnc_refresh(fd) == -1) {
+		term_cleanup(&ti);
 		return -1;
-	tcsetattr(0, TCSANOW, &ti2);
-
+	}
 	tv.tv_sec = 0;
 	tv.tv_usec = 500000;
 
@@ -81,9 +97,7 @@ int main(int argc, char * argv[])
 				break;
 		}
 	}
-	fb_free();
-	tcsetattr(0, TCSANOW, &ti1);
-#define W(a,b) write((a),(b),strlen(b))
-	W(1, "\n\x1bH\x1bJ");
+	vncproto_free();
+	term_cleanup(&ti);
 	return 0;
 }
