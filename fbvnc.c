@@ -9,7 +9,7 @@
 
 #define byterate 1920
 
-#include "vt52vnc.h"
+#include "fbvnc.h"
 #include "draw.h"
 
 int main(int argc, char * argv[])

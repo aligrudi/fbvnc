@@ -11,7 +11,7 @@
 #include <pwd.h>
 #include <string.h>
 
-#include "vt52vnc.h"
+#include "fbvnc.h"
 #include "draw.h"
 
 #define MAXRESOL		(1 << 21)
@@ -137,7 +137,8 @@ int vncproto_init(char * addr, int port)
 
 	encodingsmsgp->type = rfbSetEncodings;
 	encodingsmsgp->nEncodings = htons(1);
-	*((CARD32 *)((void *)(encodingsmsgp) + sizeof(rfbSetEncodingsMsg))) = htonl(rfbEncodingRaw);
+	*((CARD32 *)((char *) encodingsmsgp +
+		sizeof(rfbSetEncodingsMsg))) = htonl(rfbEncodingRaw);
 	write(servsock, encodingsmsgp, sizeof(*encodingsmsgp)+sizeof(CARD32));
 	return servsock;
 }
@@ -183,13 +184,16 @@ int parse_vnc_in(int fd)
 		return -1;
 	switch (vomsgp->type) {
 		case rfbFramebufferUpdate:
-			i = read(fd, ((void *)vomsgp)+sizeof(CARD8), sizeof(rfbFramebufferUpdateMsg) - sizeof(CARD8));
+			i = read(fd, (char *) vomsgp + sizeof(CARD8),
+				sizeof(rfbFramebufferUpdateMsg) - sizeof(CARD8));
 			break;
 		case rfbBell:
-			i = read(fd, ((void *)vomsgp)+sizeof(CARD8), sizeof(rfbBellMsg) - sizeof(CARD8));
+			i = read(fd, (char *) vomsgp + sizeof(CARD8),
+				sizeof(rfbBellMsg) - sizeof(CARD8));
 			break;
 		case rfbServerCutText:
-			i = read(fd, ((void *)vomsgp)+sizeof(CARD8), sizeof(rfbServerCutTextMsg) - sizeof(CARD8));
+			i = read(fd, (char *) vomsgp + sizeof(CARD8),
+				sizeof(rfbServerCutTextMsg) - sizeof(CARD8));
 			break;
 		default:
 			return -1;
