@@ -23,10 +23,6 @@ static CARD16 rows = 0;
 /* and buffer for screen updates */
 static CARD8 updates[MAXRESOL];
 
-int drawdelta(void) {
-	return 0;
-}
-
 int vncproto_init(char * addr, int port)
 {
 	struct sockaddr_in si;
