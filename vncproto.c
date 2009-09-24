@@ -17,11 +17,11 @@
 #define MAXRESOL		(1 << 21)
 
 /* vnc part */
-CARD16 fb_width = 0;
-CARD16 fb_height = 0;
+static CARD16 cols = 0;
+static CARD16 rows = 0;
 
 /* and buffer for screen updates */
-CARD8 updates[MAXRESOL];
+static CARD8 updates[MAXRESOL];
 
 int drawdelta(void) {
 	return 0;
@@ -109,12 +109,12 @@ int vncproto_init(char * addr, int port)
 	read(servsock, &serverinit, sizeof(serverinit));
 
 	fb_init();
-	fb_width = ntohs(serverinit.framebufferWidth);
-	if (fb_width > fb_cols())
-		fb_width = fb_cols();
-	fb_height = ntohs(serverinit.framebufferHeight);
-	if (fb_height > fb_rows())
-		fb_height = fb_rows();
+	cols = ntohs(serverinit.framebufferWidth);
+	if (cols > fb_cols())
+		cols = fb_cols();
+	rows = ntohs(serverinit.framebufferHeight);
+	if (rows > fb_rows())
+		rows = fb_rows();
 
 	i32 = ntohl(serverinit.nameLength);
 	for (i=0; i<i32; i++)
@@ -159,8 +159,8 @@ int request_vnc_refresh(int fd)
 	updreq.incremental = incremental; incremental=1;
 	updreq.x = htons(0);
 	updreq.y = htons(0);
-	updreq.w = htons(fb_width);
-	updreq.h = htons(fb_height);
+	updreq.w = htons(cols);
+	updreq.h = htons(rows);
 
 	write(fd, &updreq, sizeof(updreq));
 	return 0;
@@ -219,21 +219,22 @@ int parse_vnc_in(int fd)
 				uprect.r.y = ntohs(uprect.r.y);
 				uprect.r.w = ntohs(uprect.r.w);
 				uprect.r.h = ntohs(uprect.r.h);
-				if (uprect.r.x >= fb_width)
+				if (uprect.r.x >= cols)
 					return -1;
-				if (uprect.r.x+uprect.r.w > fb_width)
+				if (uprect.r.x + uprect.r.w > cols)
 					return -1;
-				if (uprect.r.y >= fb_height)
+				if (uprect.r.y >= rows)
 					return -1;
-				if (uprect.r.y+uprect.r.h > fb_height)
+				if (uprect.r.y + uprect.r.h > rows)
 					return -1;
-				for (i=0; i<uprect.r.w*uprect.r.h;) {
-					j = read(fd, updates+i, uprect.r.w*uprect.r.h-i);
+				for (i=0; i < uprect.r.w * uprect.r.h;) {
+					j = read(fd, updates + i,
+						uprect.r.w * uprect.r.h - i);
 					if (j == -1)
 						return 0;
 					i+=j;
 				}
-				update_fb(updates,uprect.r);
+				update_fb(updates, uprect.r);
 			}
 			break;
 	}
