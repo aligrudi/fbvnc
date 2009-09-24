@@ -48,11 +48,17 @@ static void mainloop(int fd)
 	struct timeval tv;
 	int pending = 0;
 	int retval = 0;
+	int update = 1;
+	int redraw = 1;
 	while(1) {
-		if (!retval && !pending) {
-			if (request_vnc_refresh(fd) == -1)
+		if (must_redraw())
+			redraw = 1;
+		if (redraw || ((update || !retval) && !pending)) {
+			if (request_vnc_refresh(fd, !redraw) == -1)
 				break;
 			pending = 1;
+			update = 0;
+			redraw = 0;
 		}
 		tv.tv_sec = 0;
 		tv.tv_usec = 500000;
@@ -62,9 +68,11 @@ static void mainloop(int fd)
 		retval = select(fd + 1, &sel_in, NULL, NULL, &tv);
 		if (!retval)
 			continue;
-		if (FD_ISSET(0, &sel_in))
+		if (FD_ISSET(0, &sel_in)) {
 			if (parse_kbd_in(0, fd) == -1)
 				break;
+			update = 1;
+		}
 		if (FD_ISSET(fd, &sel_in)) {
 			if (parse_vnc_in(fd) == -1)
 				break;

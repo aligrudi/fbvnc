@@ -22,6 +22,7 @@ static CARD16 rows = 0;
 
 /* and buffer for screen updates */
 static CARD8 updates[MAXRESOL];
+static int redraw;
 
 int vncproto_init(char * addr, int port)
 {
@@ -146,23 +147,20 @@ int vncproto_free(void)
 	return 0;
 }
 
-int request_vnc_refresh(int fd)
+int request_vnc_refresh(int fd, int inc)
 {
 	rfbFramebufferUpdateRequestMsg updreq;
-	static int incremental = 0;
-
 	updreq.type = rfbFramebufferUpdateRequest;
-	updreq.incremental = incremental; incremental=1;
+	updreq.incremental = inc;
 	updreq.x = htons(0);
 	updreq.y = htons(0);
 	updreq.w = htons(cols);
 	updreq.h = htons(rows);
-
 	write(fd, &updreq, sizeof(updreq));
 	return 0;
 }
 
-void update_fb(CARD8 *buffer, rfbRectangle r)
+static void update_fb(CARD8 *buffer, rfbRectangle r)
 {
 	fbval_t slice[1 << 14];
 	int i, j;
@@ -173,6 +171,13 @@ void update_fb(CARD8 *buffer, rfbRectangle r)
 		}
 		fb_set(r.y + i, r.x, slice, r.w);
 	}
+}
+
+int must_redraw(void)
+{
+	int ret = redraw;
+	redraw = 0;
+	return ret;
 }
 
 int parse_vnc_in(int fd)
@@ -367,7 +372,12 @@ int parse_kbd_in(int kbdfd, int fd)
 						ke.key = 0xFFE1;
 						write(fd, &ke, sizeof(ke));
 						break;
-					default: k = -1; break;
+					case 'L':
+						redraw = 1;
+						break;
+					default:
+						k = -1;
+						break;
 				}
 				vt_state=VT_CHAR; break;
 			default:
