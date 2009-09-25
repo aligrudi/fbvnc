@@ -1,8 +1,22 @@
 FBVNC
 =====
 
-Fbvnc is a small linux framebuffer vnc viewer.  It is a clone of Milan
-Pikula's vt52vnc.
+Fbvnc is a small linux framebuffer vnc viewer.  It is a fork of
+Milan Pikula's vt52vnc.  The configs can be changed in config.h file.
+When ESCKEY (can be changed in config.h; escape by default) is pressed,
+fbvnc enters command mode (something like vi normal mode).  In command
+mode, special functions can be performed:
+
+==============	==============================
+key		action
+==============	==============================
+ESCKEY		send ESCKEY through vnc
+i		exit command mode
+^c		exit fbvnc
+hjkl		move mouse
+\r \t		click
+r		redraw
+==============	==============================
 
 VT52VNC README
 ==============
