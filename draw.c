@@ -8,9 +8,6 @@
 #include <string.h>
 #include "draw.h"
 
-#define MIN(a, b)	((a) < (b) ? (a) : (b))
-#define MAX(a, b)	((a) > (b) ? (a) : (b))
-#define FBDEV_PATH	"/dev/fb0"
 #define MAXFBWIDTH	(1 << 12)
 #define BPP		sizeof(fbval_t)
 #define NLEVELS		(1 << 8)

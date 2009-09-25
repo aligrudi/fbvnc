@@ -246,6 +246,8 @@ int parse_vnc_in(int fd)
 #define ESCKEY		'\x1b'
 /* mouse keys: left, down, up, right, button1, button2, button3 */
 #define MOUSEKEYS	"hjkl\r \t"
+/* mouse movements in pixels */
+#define MOUSESPEED	4
 
 static int mr, mc;		/* mouse position */
 static int esc;			/* escape mode */
@@ -257,16 +259,16 @@ static void handle_mouse(int fd, int c)
 	CARD8 mask = 0;
 	switch (strchr(mk, c) - mk) {
 	case 0:
-		mc--;
+		mc -= MOUSESPEED;
 		break;
 	case 1:
-		mr++;
+		mr += MOUSESPEED;
 		break;
 	case 2:
-		mr--;
+		mr -= MOUSESPEED;
 		break;
 	case 3:
-		mc++;
+		mc += MOUSESPEED;
 		break;
 	case 4:
 		mask = rfbButton1Mask;
@@ -278,8 +280,8 @@ static void handle_mouse(int fd, int c)
 		mask = rfbButton3Mask;
 		break;
 	}
-	me.y = htons(mr);
-	me.x = htons(mc);
+	me.y = htons(MAX(0, MIN(rows - 1, mr)));
+	me.x = htons(MAX(0, MIN(cols - 1, mc)));
 	write(fd, &me, sizeof(me));
 	if (mask) {
 		me.buttonMask = mask;
