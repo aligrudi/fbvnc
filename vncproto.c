@@ -11,8 +11,9 @@
 #include <pwd.h>
 #include <string.h>
 
-#include "fbvnc.h"
+#include "config.h"
 #include "draw.h"
+#include "fbvnc.h"
 
 #define MAXRESOL		(1 << 21)
 
@@ -241,13 +242,6 @@ int parse_vnc_in(int fd)
 	}
 	return 0;
 }
-
-/* escape key */
-#define ESCKEY		'\x1b'
-/* mouse keys: left, down, up, right, button1, button2, button3 */
-#define MOUSEKEYS	"hjkl\r \t"
-/* mouse movements in pixels */
-#define MOUSESPEED	4
 
 static int mr, mc;		/* mouse position */
 static int esc;			/* escape mode */

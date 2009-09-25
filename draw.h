@@ -1,7 +1,5 @@
 #define MIN(a, b)	((a) < (b) ? (a) : (b))
 #define MAX(a, b)	((a) > (b) ? (a) : (b))
-#define FBDEV_PATH	"/dev/fb0"
-typedef unsigned short fbval_t;
 
 void fb_init(void);
 void fb_free(void);
