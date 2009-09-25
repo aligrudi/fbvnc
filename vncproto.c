@@ -242,148 +242,102 @@ int parse_vnc_in(int fd)
 	return 0;
 }
 
+/* escape key */
+#define ESCKEY		'\x1b'
+/* mouse keys: left, down, up, right, button1, button2, button3 */
+#define MOUSEKEYS	"hjkl\r \t"
+
+static int mr, mc;		/* mouse position */
+static int esc;			/* escape mode */
+static char mk[] = MOUSEKEYS;
+
+static void handle_mouse(int fd, int c)
+{
+	rfbPointerEventMsg me = {rfbPointerEvent, 0, 0, 0};
+	CARD8 mask = 0;
+	switch (strchr(mk, c) - mk) {
+	case 0:
+		mc--;
+		break;
+	case 1:
+		mr++;
+		break;
+	case 2:
+		mr--;
+		break;
+	case 3:
+		mc++;
+		break;
+	case 4:
+		mask = rfbButton1Mask;
+		break;
+	case 5:
+		mask = rfbButton2Mask;
+		break;
+	case 6:
+		mask = rfbButton3Mask;
+		break;
+	}
+	me.y = htons(mr);
+	me.x = htons(mc);
+	write(fd, &me, sizeof(me));
+	if (mask) {
+		me.buttonMask = mask;
+		write(fd, &me, sizeof(me));
+		me.buttonMask = 0;
+		write(fd, &me, sizeof(me));
+	}
+}
+
 int parse_kbd_in(int kbdfd, int fd)
 {
-	static rfbKeyEventMsg ke;
-	static rfbPointerEventMsg me = {rfbPointerEvent, 0, 0, 0};
-	static int mouse_on = -1; static int mouse_factor = 1;
-#define VT_CHAR	0
-#define VT_ESC	1
-	static int vt_state=VT_CHAR;
-	static int ctrllock_state = 0;
-	static int shiftlock_state = 0;
+	static rfbKeyEventMsg ke = {rfbKeyEvent};
 	char buf[1024];
-	int i, j, k;
+	int i, j;
 
-	if (mouse_on == -1) {
-		me.x = htons(fb_cols() / 2);
-		me.y = htons(fb_rows() / 2);
-		mouse_on = 0;
-		ke.type = rfbKeyEvent;
-	}
-
-	if ( (j=read(kbdfd, buf, sizeof(buf))) <= 0 )
+	if ((j = read(kbdfd, buf, sizeof(buf))) <= 0 )
 		return -1;
-	for (i=0; i<j; i++) {
-		k = -1;
-		switch(vt_state) {
-			case VT_CHAR:
-				switch(buf[i]) {
-					case '\x08': k = 0xFF08; break;
-					case '\x09': k = 0xFF09; break;
-					case '\x0d': if (!mouse_on) {
-							k = 0xFF0D; break;
-							}
-					case '1': case '2': case '3':
-					case '4': case '5': case '6':
-					case '7': case '8': case '9':
-					case '0': case '.': case '-':
-					case ',':
-					if (!mouse_on) {
-						k = (unsigned char)buf[i];
-						break;
-					}
-					if (buf[i] == '5') {
-						mouse_factor <<= 1;
-						if (mouse_factor > 64)
-							mouse_factor = 1;
-						break;
-					}
-					if (buf[i] == '4' || buf[i] == '7' || buf[i] == '1') {
-						if (ntohs(me.x)>mouse_factor)
-							me.x = htons(ntohs(me.x)-mouse_factor);
-						else
-							me.x = htons(0);
-					}
-					if (buf[i] == '6' || buf[i] == '9' || buf[i] == '3') {
-						if (ntohs(me.x)+mouse_factor < fb_cols()-1)
-							me.x = htons(ntohs(me.x)+mouse_factor);
-						else
-							me.x = htons(fb_cols()-1);
-					}
-					if (buf[i] == '7' || buf[i] == '8' || buf[i] == '9') {
-						if (ntohs(me.y)>mouse_factor)
-							me.y = htons(ntohs(me.y)-mouse_factor);
-						else
-							me.y = htons(0);
-					}
-					if (buf[i] == '1' || buf[i] == '2' || buf[i] == '3') {
-						if (ntohs(me.y)+mouse_factor < fb_rows()-1)
-							me.y = htons(ntohs(me.y)+mouse_factor);
-						else
-							me.y = htons(fb_rows()-1);
-					}
-
-					if (buf[i]>='1' && buf[i]<='9') {
-						write(fd, &me, sizeof(me));
-						break;
-					}
-					if (buf[i]=='-') {
-						me.buttonMask = me.buttonMask ^ rfbButton1Mask;
-						write(fd, &me, sizeof(me));
-					}
-					if (buf[i]==',') {
-						me.buttonMask = me.buttonMask ^ rfbButton2Mask;
-						write(fd, &me, sizeof(me));
-					}
-					if (buf[i]=='\x0d') {
-						me.buttonMask = me.buttonMask ^ rfbButton3Mask;
-						write(fd, &me, sizeof(me));
-					}
-					if (buf[i]=='0') {
-						me.buttonMask = me.buttonMask ^ rfbButton1Mask;
-						write(fd, &me, sizeof(me));
-						me.buttonMask = me.buttonMask ^ rfbButton1Mask;
-						write(fd, &me, sizeof(me));
-					}
-					if (buf[i]=='.') {
-						me.buttonMask = me.buttonMask ^ rfbButton2Mask;
-						write(fd, &me, sizeof(me));
-						me.buttonMask = me.buttonMask ^ rfbButton2Mask;
-						write(fd, &me, sizeof(me));
-					}
-					break;
-					case '\x1b': vt_state = VT_ESC; break;
-					default: k = (unsigned char)buf[i];
-				}
+	for (i = 0; i < j; i++) {
+		int k = -1;
+		if (!esc) {
+			switch (buf[i]) {
+			case '\x08':
+				k = 0xFF08;
 				break;
-			case VT_ESC:
-				switch(buf[i]) {
-					case '\x1b': k = (unsigned char)buf[i];
-							break;
-					case '\x03': /* esc ^c */
-						return -1;
-					case 'D': k = 0xFF51; break;
-					case 'A': k = 0xFF52; break;
-					case 'C': k = 0xFF53; break;
-					case 'B': k = 0xFF54; break;
-					case 'P': /* mouse lock */
-						mouse_on = !mouse_on;
-						break;
-					case 'Q': /* control lock */
-						ctrllock_state ^= 1;
-						ke.down = ctrllock_state;
-						ke.key = 0xFFE3;
-						write(fd, &ke, sizeof(ke));
-						break;
-					case 'R': /* shift lock */
-						shiftlock_state ^= 1;
-						ke.down = shiftlock_state;
-						ke.key = 0xFFE1;
-						write(fd, &ke, sizeof(ke));
-						break;
-					case 'L':
-						redraw = 1;
-						break;
-					default:
-						k = -1;
-						break;
-				}
-				vt_state=VT_CHAR; break;
+			case '\x09':
+				k = 0xFF09;
+				break;
+			case '\x0d':
+				k = 0xFF0D;
+				break;
+			case ESCKEY:
+				esc = 1;
+				break;
 			default:
-				break;
+				k = (unsigned char) buf[i];
+			}
+		} else {
+			if (strchr(mk, buf[i])) {
+				handle_mouse(fd, buf[i]);
+				continue;
+			}
+			switch(buf[i]) {
+				case ESCKEY:
+					k = (unsigned char) buf[i];
+					break;
+				case 'q':
+				case 'i':
+					esc = 0;
+					break;
+				case '\x03':	/* esc ^c */
+					return -1;
+				case 'r':
+				case 'L':
+					redraw = 1;
+					break;
+			}
 		}
-		if (k>0) {
+		if (k > 0) {
 			ke.down = 1;
 			ke.key = htonl(k);
 			write(fd, &ke, sizeof(ke));
