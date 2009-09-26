@@ -1,15 +1,16 @@
+#include <arpa/inet.h>
+#include <ctype.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <pwd.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "config.h"
 #include "draw.h"
@@ -285,11 +286,19 @@ static void handle_mouse(int fd, int c)
 	}
 }
 
+static int press(int fd, int key, int down)
+{
+	rfbKeyEventMsg ke = {rfbKeyEvent};
+	ke.key = htonl(key);
+	ke.down = down;
+	return write(fd, &ke, sizeof(ke));
+}
+
 int parse_kbd_in(int kbdfd, int fd)
 {
-	static rfbKeyEventMsg ke = {rfbKeyEvent};
 	char buf[1024];
 	int i, j;
+	int mod = 0;
 
 	if ((j = read(kbdfd, buf, sizeof(buf))) <= 0 )
 		return -1;
@@ -298,13 +307,16 @@ int parse_kbd_in(int kbdfd, int fd)
 		if (!cmd) {
 			switch (buf[i]) {
 			case '\x08':
-				k = 0xFF08;
+				k = 0xff08;
 				break;
 			case '\x09':
-				k = 0xFF09;
+				k = 0xff09;
+				break;
+			case '\x1b':
+				k = 0xff1b;
 				break;
 			case '\x0d':
-				k = 0xFF0D;
+				k = 0xff0d;
 				break;
 			case CMDKEY:
 				cmd = 1;
@@ -333,12 +345,15 @@ int parse_kbd_in(int kbdfd, int fd)
 					break;
 			}
 		}
+		if (isupper(k) || strchr(":\"<>?{}|+_()*&^%$#@!~", k))
+			mod = 0xffe1;
 		if (k > 0) {
-			ke.down = 1;
-			ke.key = htonl(k);
-			write(fd, &ke, sizeof(ke));
-			ke.down = 0;
-			write(fd, &ke, sizeof(ke));
+			if (mod)
+				press(fd, mod, 1);
+			press(fd, k, 1);
+			press(fd, k, 0);
+			if (mod)
+				press(fd, mod, 0);
 		}
 	}
 	return 0;
