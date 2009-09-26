@@ -244,7 +244,7 @@ int parse_vnc_in(int fd)
 }
 
 static int mr, mc;		/* mouse position */
-static int esc;			/* escape mode */
+static int cmd;			/* command mode */
 static char mk[] = MOUSEKEYS;
 
 static void handle_mouse(int fd, int c)
@@ -295,7 +295,7 @@ int parse_kbd_in(int kbdfd, int fd)
 		return -1;
 	for (i = 0; i < j; i++) {
 		int k = -1;
-		if (!esc) {
+		if (!cmd) {
 			switch (buf[i]) {
 			case '\x08':
 				k = 0xFF08;
@@ -306,8 +306,8 @@ int parse_kbd_in(int kbdfd, int fd)
 			case '\x0d':
 				k = 0xFF0D;
 				break;
-			case ESCKEY:
-				esc = 1;
+			case CMDKEY:
+				cmd = 1;
 				break;
 			default:
 				k = (unsigned char) buf[i];
@@ -318,14 +318,14 @@ int parse_kbd_in(int kbdfd, int fd)
 				continue;
 			}
 			switch(buf[i]) {
-				case ESCKEY:
+				case CMDKEY:
 					k = (unsigned char) buf[i];
 					break;
 				case 'q':
 				case 'i':
-					esc = 0;
+					cmd = 0;
 					break;
-				case '\x03':	/* esc ^c */
+				case '\x03':	/* cmd ^c */
 					return -1;
 				case 'r':
 				case 'L':
