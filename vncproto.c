@@ -307,6 +307,7 @@ int parse_kbd_in(int kbdfd, int fd)
 		if (!cmd) {
 			switch (buf[i]) {
 			case '\x08':
+			case '\x7f':
 				k = 0xff08;
 				break;
 			case '\x09':
@@ -347,6 +348,10 @@ int parse_kbd_in(int kbdfd, int fd)
 		}
 		if (isupper(k) || strchr(":\"<>?{}|+_()*&^%$#@!~", k))
 			mod = 0xffe1;
+		if (k >= 1 && k <= 26) {
+			k = 'a' + k - 1;
+			mod = 0xffe3;
+		}
 		if (k > 0) {
 			if (mod)
 				press(fd, mod, 1);
