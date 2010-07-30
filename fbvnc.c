@@ -178,8 +178,8 @@ int vnc_event(int fd)
 				return -1;
 			for (i = 0; i < w * h; ) {
 				nr = read(fd, buf + i, w * h - i);
-				if (nr == -1)
-					return 0;
+				if (nr <= 0)
+					return -1;
 				i += nr;
 			}
 			drawfb(buf, x, y, w, h);
