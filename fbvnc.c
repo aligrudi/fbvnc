@@ -27,6 +27,8 @@
 #include "draw.h"
 #include "vnc.h"
 
+#define VNC_PORT		5900
+
 #define MAXRES			(1 << 21)
 #define MIN(a, b)		((a) < (b) ? (a) : (b))
 
@@ -306,7 +308,6 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 {
 	struct pollfd ufds[3];
 	int pending = 0;
-	int retval = 0;
 	int update = 1;
 	int err;
 	ufds[0].fd = kbd_fd;
@@ -315,8 +316,8 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 	ufds[1].events = POLLIN;
 	ufds[2].fd = rat_fd;
 	ufds[2].events = POLLIN;
-	while(1) {
-		if ((update || !retval) && !pending) {
+	while (1) {
+		if (update && !pending) {
 			if (vnc_refresh(vnc_fd, 1) == -1)
 				break;
 			pending = 1;
@@ -344,8 +345,6 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 		}
 	}
 }
-
-#define VNC_PORT	5900
 
 int main(int argc, char * argv[])
 {
