@@ -18,16 +18,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <termios.h>
 #include <linux/input.h>
 #include "draw.h"
 #include "vnc.h"
 
-#define VNC_PORT		5900
+#define VNC_PORT		"5900"
 
 #define MAXRES			(1 << 21)
 #define MIN(a, b)		((a) < (b) ? (a) : (b))
@@ -37,58 +37,49 @@ static int mr, mc;		/* mouse position */
 
 static char buf[MAXRES];
 
-int vnc_init(char *addr, int port)
+static int vnc_connect(char *addr, char *port)
 {
-	struct sockaddr_in si;
+	struct addrinfo hints, *addrinfo;
+	int fd;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_PASSIVE;
+
+	if (getaddrinfo(addr, port, &hints, &addrinfo))
+		return -1;
+	fd = socket(addrinfo->ai_family, addrinfo->ai_socktype,
+			addrinfo->ai_protocol);
+
+	if (connect(fd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1) {
+		close(fd);
+		freeaddrinfo(addrinfo);
+		return -1;
+	}
+	freeaddrinfo(addrinfo);
+	return fd;
+}
+
+int vnc_init(int fd)
+{
 	char vncver[] = "RFB 003.003\n";
 	struct vnc_client_init clientinit;
 	struct vnc_server_init serverinit;
 	struct vnc_client_pixelfmt pixfmt_cmd;
-	struct hostent *he;
-	int servsock;
 	int connstat = VNC_CONN_FAILED;
 
-	si.sin_family = AF_INET;
-	si.sin_port = htons(port);
-	he = gethostbyname(addr);
-	if (he) {
-		si.sin_addr.s_addr = *((unsigned long *)(he->h_addr));
-	} else if (inet_aton(addr, &(si.sin_addr)) < 0) {
-		fprintf(stderr, "cannot resolve hostname");
-		return -1;
-	}
+	write(fd, vncver, 12);
+	read(fd, vncver, 12);
 
-	servsock = socket(PF_INET, SOCK_STREAM, 0);
-	if (servsock == -1) {
-		perror("Cannot create socket");
-		return -1;
-	}
-	if (connect(servsock, (void *) &si, sizeof(si)) < 0) {
-		perror("cannot connect");
-		close(servsock);
-		return -1;
-	}
-	write(servsock, vncver, 12);
-	read(servsock, vncver, 12);
+	read(fd, &connstat, sizeof(connstat));
 
-	read(servsock, &connstat, sizeof(connstat));
-
-	switch (ntohl(connstat)) {
-	case VNC_CONN_FAILED:
-		puts("remote server says: connection failed");
-		close(servsock);
+	if (ntohl(connstat) != VNC_CONN_NOAUTH)
 		return -1;
-	case VNC_CONN_NOAUTH:
-		break;
-	case VNC_CONN_AUTH:
-		puts("we don't support DES yet");
-		close(servsock);
-		return -1;
-	}
 
 	clientinit.shared = 1;
-	write(servsock, &clientinit, sizeof(clientinit));
-	read(servsock, &serverinit, sizeof(serverinit));
+	write(fd, &clientinit, sizeof(clientinit));
+	read(fd, &serverinit, sizeof(serverinit));
 
 	fb_init();
 	cols = MIN(ntohs(serverinit.w), fb_cols());
@@ -96,7 +87,7 @@ int vnc_init(char *addr, int port)
 	mr = rows / 2;
 	mc = cols / 2;
 
-	read(servsock, buf, ntohl(serverinit.len));
+	read(fd, buf, ntohl(serverinit.len));
 	pixfmt_cmd.type = VNC_CLIENT_PIXFMT;
 	pixfmt_cmd.format.bpp = 8;
 	pixfmt_cmd.format.depth = 8;
@@ -110,8 +101,8 @@ int vnc_init(char *addr, int port)
 	pixfmt_cmd.format.gshl = 2;
 	pixfmt_cmd.format.bshl = 5;
 
-	write(servsock, &pixfmt_cmd, sizeof(pixfmt_cmd));
-	return servsock;
+	write(fd, &pixfmt_cmd, sizeof(pixfmt_cmd));
+	return fd;
 }
 
 int vnc_free(void)
@@ -196,7 +187,7 @@ int vnc_event(int fd)
 		nr = read(fd, buf, ntohs(colormap->n) * 3 * 2);
 		break;
 	default:
-		printf("unknown msg: %d\n", msg[0]);
+		fprintf(stderr, "unknown vnc msg: %d\n", msg[0]);
 		return -1;
 	}
 	return 0;
@@ -348,16 +339,22 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 
 int main(int argc, char * argv[])
 {
-	int port = VNC_PORT;
+	char *port = VNC_PORT;
 	char *host = "127.0.0.1";
 	struct termios ti;
 	int vnc_fd, rat_fd;
 	if (argc >= 2)
 		host = argv[1];
 	if (argc >= 3)
-		port = atoi(argv[2]);
-	if ((vnc_fd = vnc_init(host, port)) == -1)
-		return -1;
+		port = argv[2];
+	if ((vnc_fd = vnc_connect(host, port)) == -1) {
+		fprintf(stderr, "could not connect!\n");
+		return 1;
+	}
+	if (vnc_init(vnc_fd) == -1) {
+		fprintf(stderr, "vnc init failed!\n");
+		return 1;
+	}
 	term_setup(&ti);
 	rat_fd = open("/dev/input/mice", O_RDONLY);
 
