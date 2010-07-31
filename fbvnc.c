@@ -331,7 +331,8 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 	ufds[2].events = POLLIN;
 	while (1) {
 		if (update && !pending) {
-			if (vnc_refresh(vnc_fd, 1) == -1)
+			static int i;
+			if (vnc_refresh(vnc_fd, i++) == -1)
 				break;
 			pending = 1;
 			update = 0;
