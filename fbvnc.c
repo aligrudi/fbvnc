@@ -227,15 +227,16 @@ static int press(int fd, int key, int down)
 
 int kbd_event(int fd, int kbdfd)
 {
-	char msg[1024];
-	int i, j;
-	int mod = 0;
+	char key[1024];
+	int i, nr;
 
-	if ((j = read(kbdfd, msg, sizeof(msg))) <= 0 )
+	if ((nr = read(kbdfd, key, sizeof(key))) <= 0 )
 		return -1;
-	for (i = 0; i < j; i++) {
+	for (i = 0; i < nr; i++) {
 		int k = -1;
-		switch (msg[i]) {
+		int mod[4];
+		int nmod = 0;
+		switch (key[i]) {
 		case 0x08:
 		case 0x7f:
 			k = 0xff08;
@@ -244,7 +245,27 @@ int kbd_event(int fd, int kbdfd)
 			k = 0xff09;
 			break;
 		case 0x1b:
+			if (i + 2 < nr && key[i + 1] == '[') {
+				if (key[i + 2] == 'A')
+					k = 0xff52;
+				if (key[i + 2] == 'B')
+					k = 0xff54;
+				if (key[i + 2] == 'C')
+					k = 0xff53;
+				if (key[i + 2] == 'D')
+					k = 0xff51;
+				if (key[i + 2] == 'H')
+					k = 0xff50;
+				if (k > 0) {
+					i += 2;
+					break;
+				}
+			}
 			k = 0xff1b;
+			if (i + 1 < nr) {
+				mod[nmod++] = 0xffe9;
+				k = key[++i];
+			}
 			break;
 		case 0x0d:
 			k = 0xff0d;
@@ -252,21 +273,22 @@ int kbd_event(int fd, int kbdfd)
 		case 0x03:
 			return -1;
 		default:
-			k = (unsigned char) msg[i];
+			k = (unsigned char) key[i];
 		}
 		if (isupper(k) || strchr(":\"<>?{}|+_()*&^%$#@!~", k))
-			mod = 0xffe1;
+			mod[nmod++] = 0xffe1;
 		if (k >= 1 && k <= 26) {
 			k = 'a' + k - 1;
-			mod = 0xffe3;
+			mod[nmod++] = 0xffe3;
 		}
 		if (k > 0) {
-			if (mod)
-				press(fd, mod, 1);
+			int j;
+			for (j = 0; j < nmod; j++)
+				press(fd, mod[j], 1);
 			press(fd, k, 1);
 			press(fd, k, 0);
-			if (mod)
-				press(fd, mod, 0);
+			for (j = 0; j < nmod; j++)
+				press(fd, mod[j], 0);
 		}
 	}
 	return 0;
