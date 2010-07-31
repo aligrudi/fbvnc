@@ -130,8 +130,11 @@ static void drawfb(char *s, int x, int y, int w, int h)
 	int i, j;
 	for (i = 0; i < h; i++) {
 		for (j = 0; j < w; j++) {
-			unsigned char *p = (void *) &s[i * w + j];
-			slice[j] = fb_color(*p, *p, *p);
+			int c = *(unsigned char *) &s[i * w + j];
+			int r = (c & 0x3) << 6;
+			int g = ((c >> 2) & 0x7) << 5;
+			int b = ((c >> 5) & 0x7) << 5;
+			slice[j] = fb_color(r, g, b);
 		}
 		fb_set(y + i, x, slice, w);
 	}
