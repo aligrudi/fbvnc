@@ -61,7 +61,7 @@ static int vnc_connect(char *addr, char *port)
 	return fd;
 }
 
-int vnc_init(int fd)
+static int vnc_init(int fd)
 {
 	char vncver[] = "RFB 003.003\n";
 	struct vnc_client_init clientinit;
@@ -105,13 +105,13 @@ int vnc_init(int fd)
 	return fd;
 }
 
-int vnc_free(void)
+static int vnc_free(void)
 {
 	fb_free();
 	return 0;
 }
 
-int vnc_refresh(int fd, int inc)
+static int vnc_refresh(int fd, int inc)
 {
 	struct vnc_client_fbup fbup_req;
 	fbup_req.type = VNC_CLIENT_FBUP;
@@ -137,7 +137,7 @@ static void drawfb(char *s, int x, int y, int w, int h)
 	}
 }
 
-int vnc_event(int fd)
+static int vnc_event(int fd)
 {
 	struct vnc_rect uprect;
 	char msg[1 << 12];
@@ -193,7 +193,7 @@ int vnc_event(int fd)
 	return 0;
 }
 
-int rat_event(int fd, int ratfd)
+static int rat_event(int fd, int ratfd)
 {
 	char ie[3];
 	struct vnc_client_ratevent me = {VNC_CLIENT_RATEVENT};
@@ -225,7 +225,7 @@ static int press(int fd, int key, int down)
 	return write(fd, &ke, sizeof(ke));
 }
 
-int kbd_event(int fd, int kbdfd)
+static int kbd_event(int fd, int kbdfd)
 {
 	char key[1024];
 	int i, nr;
