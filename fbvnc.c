@@ -140,6 +140,18 @@ static void drawfb(char *s, int x, int y, int w, int h)
 	}
 }
 
+static void xread(int fd, void *buf, int len)
+{
+	int nr = 0;
+	int n;
+	while (nr < len && (n = read(fd, buf + nr, len - nr)) > 0)
+		nr += n;
+	if (nr < len) {
+		printf("partial vnc read!\n");
+		exit(1);
+	}
+}
+
 static int vnc_event(int fd)
 {
 	struct vnc_rect uprect;
@@ -147,21 +159,18 @@ static int vnc_event(int fd)
 	struct vnc_server_fbup *fbup = (void *) msg;
 	struct vnc_server_cuttext *cuttext = (void *) msg;
 	struct vnc_server_colormap *colormap = (void *) msg;
-	int nr, i, j;
+	int j;
 	int n;
 
-	if ((nr = read(fd, msg, 1)) != 1)
+	if (read(fd, msg, 1) != 1)
 		return -1;
-
 	switch (msg[0]) {
 	case VNC_SERVER_FBUP:
-		nr = read(fd, msg + 1, sizeof(*fbup) - 1);
+		xread(fd, msg + 1, sizeof(*fbup) - 1);
 		n = ntohs(fbup->n);
 		for (j = 0; j < n; j++) {
 			int x, y, w, h;
-			nr = read(fd, &uprect, sizeof(uprect));
-			if (nr != sizeof(uprect))
-				return -1;
+			xread(fd, &uprect, sizeof(uprect));
 			x = ntohs(uprect.x);
 			y = ntohs(uprect.y);
 			w = ntohs(uprect.w);
@@ -170,24 +179,19 @@ static int vnc_event(int fd)
 				return -1;
 			if (y >= rows || y + h > rows)
 				return -1;
-			for (i = 0; i < w * h; ) {
-				nr = read(fd, buf + i, w * h - i);
-				if (nr <= 0)
-					return -1;
-				i += nr;
-			}
+			xread(fd, buf, w * h);
 			drawfb(buf, x, y, w, h);
 		}
 		break;
 	case VNC_SERVER_BELL:
 		break;
 	case VNC_SERVER_CUTTEXT:
-		nr = read(fd, msg + 1, sizeof(*cuttext) - 1);
-		nr = read(fd, buf, cuttext->len);
+		xread(fd, msg + 1, sizeof(*cuttext) - 1);
+		xread(fd, buf, cuttext->len);
 		break;
 	case VNC_SERVER_COLORMAP:
-		nr = read(fd, msg + 1, sizeof(*colormap) - 1);
-		nr = read(fd, buf, ntohs(colormap->n) * 3 * 2);
+		xread(fd, msg + 1, sizeof(*colormap) - 1);
+		xread(fd, buf, ntohs(colormap->n) * 3 * 2);
 		break;
 	default:
 		fprintf(stderr, "unknown vnc msg: %d\n", msg[0]);
