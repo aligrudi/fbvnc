@@ -213,10 +213,10 @@ static int rat_event(int fd, int ratfd)
 	mr = MAX(0, MIN(rows - 1, mr));
 	if (ie[0] & 0x01)
 		mask |= VNC_BUTTON1_MASK;
-	if (ie[0] & 0x02)
-		mask |= VNC_BUTTON1_MASK;
 	if (ie[0] & 0x04)
-		mask |= VNC_BUTTON1_MASK;
+		mask |= VNC_BUTTON2_MASK;
+	if (ie[0] & 0x02)
+		mask |= VNC_BUTTON3_MASK;
 	me.y = htons(mr);
 	me.x = htons(mc);
 	me.mask = mask;
