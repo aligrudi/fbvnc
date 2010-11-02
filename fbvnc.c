@@ -187,7 +187,7 @@ static int vnc_event(int fd)
 		break;
 	case VNC_SERVER_CUTTEXT:
 		xread(fd, msg + 1, sizeof(*cuttext) - 1);
-		xread(fd, buf, cuttext->len);
+		xread(fd, buf, ntohl(cuttext->len));
 		break;
 	case VNC_SERVER_COLORMAP:
 		xread(fd, msg + 1, sizeof(*colormap) - 1);
