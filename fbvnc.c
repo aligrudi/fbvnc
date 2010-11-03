@@ -358,6 +358,7 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 			if (vnc_event(vnc_fd) == -1)
 				break;
 			pending = 0;
+			update = 1;
 		}
 		if (ufds[2].revents & POLLIN) {
 			if (rat_event(vnc_fd, rat_fd) == -1)
