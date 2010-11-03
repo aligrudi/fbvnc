@@ -328,7 +328,6 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 {
 	struct pollfd ufds[3];
 	int pending = 0;
-	int update = 1;
 	int err;
 	ufds[0].fd = kbd_fd;
 	ufds[0].events = POLLIN;
@@ -336,35 +335,28 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 	ufds[1].events = POLLIN;
 	ufds[2].fd = rat_fd;
 	ufds[2].events = POLLIN;
+	if (vnc_refresh(vnc_fd, 0))
+		return;
 	while (1) {
-		if (update && !pending) {
-			static int i;
-			if (vnc_refresh(vnc_fd, i++) == -1)
-				break;
-			pending = 1;
-			update = 0;
-		}
 		err = poll(ufds, 3, 500);
 		if (err == -1 && errno != EINTR)
 			break;
 		if (!err)
 			continue;
-		if (ufds[0].revents & POLLIN) {
+		if (ufds[0].revents & POLLIN)
 			if (kbd_event(vnc_fd, kbd_fd) == -1)
 				break;
-			update = 1;
-		}
 		if (ufds[1].revents & POLLIN) {
 			if (vnc_event(vnc_fd) == -1)
 				break;
 			pending = 0;
-			update = 1;
 		}
-		if (ufds[2].revents & POLLIN) {
+		if (ufds[2].revents & POLLIN)
 			if (rat_event(vnc_fd, rat_fd) == -1)
 				break;
-			update = 1;
-		}
+		if (!pending++)
+			if (vnc_refresh(vnc_fd, 1))
+				break;
 	}
 }
 
