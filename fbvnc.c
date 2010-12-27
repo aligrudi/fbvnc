@@ -272,13 +272,16 @@ static int kbd_event(int fd, int kbdfd)
 			if (i + 1 < nr) {
 				mod[nmod++] = 0xffe9;
 				k = key[++i];
+				if (k == 0x03)	/* esc-^C: quit */
+					return -1;
 			}
 			break;
 		case 0x0d:
 			k = 0xff0d;
 			break;
-		case 0x03:
-			return -1;
+		case 0x0c:	/* ^L: redraw */
+			if (vnc_refresh(fd, 0))
+				return -1;
 		default:
 			k = (unsigned char) key[i];
 		}
