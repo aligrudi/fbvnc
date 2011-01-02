@@ -285,7 +285,7 @@ static int kbd_event(int fd, int kbdfd)
 		default:
 			k = (unsigned char) key[i];
 		}
-		if (isupper(k) || strchr(":\"<>?{}|+_()*&^%$#@!~", k))
+		if (k >= 'A' && k <= 'Z' || strchr(":\"<>?{}|+_()*&^%$#@!~", k))
 			mod[nmod++] = 0xffe1;
 		if (k >= 1 && k <= 26) {
 			k = 'a' + k - 1;
