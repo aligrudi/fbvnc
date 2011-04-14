@@ -1,11 +1,9 @@
 /*
  * fbvnc - a small linux framebuffer vnc viewer
  *
- * Copyright (C) 2009-2010 Ali Gholami Rudi
+ * Copyright (C) 2009-2011 Ali Gholami Rudi
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License, as published by the
- * Free Software Foundation.
+ * This program is released under GNU GPL version 2.
  */
 #include <arpa/inet.h>
 #include <ctype.h>
@@ -26,6 +24,12 @@
 #include <linux/input.h>
 #include "draw.h"
 #include "vnc.h"
+
+/* framebuffer depth */
+typedef unsigned int fbval_t;
+
+#define MIN(a, b)	((a) < (b) ? (a) : (b))
+#define MAX(a, b)	((a) > (b) ? (a) : (b))
 
 #define VNC_PORT		"5900"
 
@@ -81,7 +85,12 @@ static int vnc_init(int fd)
 	write(fd, &clientinit, sizeof(clientinit));
 	read(fd, &serverinit, sizeof(serverinit));
 
-	fb_init();
+	if (fb_init())
+		return -1;
+	if (FBM_BPP(fb_mode()) != sizeof(fbval_t)) {
+		fprintf(stderr, "fbvnc: fbval_t doesn't match fb depth\n");
+		exit(1);
+	}
 	cols = MIN(ntohs(serverinit.w), fb_cols());
 	rows = MIN(ntohs(serverinit.h), fb_rows());
 	mr = rows / 2;
@@ -134,7 +143,7 @@ static void drawfb(char *s, int x, int y, int w, int h)
 			int r = (c & 0x3) << 6;
 			int g = ((c >> 2) & 0x7) << 5;
 			int b = ((c >> 5) & 0x7) << 5;
-			slice[j] = fb_color(r, g, b);
+			slice[j] = fb_val(r, g, b);
 		}
 		fb_set(y + i, x, slice, w);
 	}
