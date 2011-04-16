@@ -28,6 +28,9 @@
 /* framebuffer depth */
 typedef unsigned int fbval_t;
 
+/* optimized version of fb_val() */
+#define FB_VAL(r, g, b)	fb_val((r), (g), (b))
+
 #define MIN(a, b)	((a) < (b) ? (a) : (b))
 #define MAX(a, b)	((a) > (b) ? (a) : (b))
 
@@ -143,7 +146,7 @@ static void drawfb(char *s, int x, int y, int w, int h)
 			int r = (c & 0x3) << 6;
 			int g = ((c >> 2) & 0x7) << 5;
 			int b = ((c >> 5) & 0x7) << 5;
-			slice[j] = fb_val(r, g, b);
+			slice[j] = FB_VAL(r, g, b);
 		}
 		fb_set(y + i, x, slice, w);
 	}
