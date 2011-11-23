@@ -41,6 +41,7 @@ typedef unsigned int fbval_t;
 
 static int cols, rows;
 static int mr, mc;		/* mouse position */
+static int nodraw;		/* don't draw anything */
 
 static char buf[MAXRES];
 
@@ -192,7 +193,8 @@ static int vnc_event(int fd)
 			if (y >= rows || y + h > rows)
 				return -1;
 			xread(fd, buf, w * h);
-			drawfb(buf, x, y, w, h);
+			if (!nodraw)
+				drawfb(buf, x, y, w, h);
 		}
 		break;
 	case VNC_SERVER_BELL:
@@ -244,6 +246,12 @@ static int press(int fd, int key, int down)
 	return write(fd, &ke, sizeof(ke));
 }
 
+static void showmsg(void)
+{
+	char *msg = "\x1b[H\t\t\t*** fbvnc ***\r";
+	write(STDOUT_FILENO, msg, strlen(msg));
+}
+
 static int kbd_event(int fd, int kbdfd)
 {
 	char key[1024];
@@ -291,9 +299,15 @@ static int kbd_event(int fd, int kbdfd)
 		case 0x0d:
 			k = 0xff0d;
 			break;
-		case 0x0c:	/* ^L: redraw */
-			if (vnc_refresh(fd, 0))
-				return -1;
+		case 0x0:	/* c-space: stop/start drawing */
+			if (!nodraw) {
+				nodraw = 1;
+				showmsg();
+			} else {
+				nodraw = 0;
+				if (vnc_refresh(fd, 0))
+					return -1;
+			}
 		default:
 			k = (unsigned char) key[i];
 		}
@@ -320,13 +334,12 @@ static void term_setup(struct termios *ti)
 {
 	struct termios termios;
 	char *hide = "\x1b[?25l";
-	char *clear = "\x1b[2J\x1b[H";
-	char *msg = "\t\t\t*** fbvnc ***\r\n";
+	char *clear = "\x1b[2J";
 
 	write(STDIN_FILENO, hide, strlen(hide));
 	write(STDOUT_FILENO, clear, strlen(clear));
-	write(STDOUT_FILENO, msg, strlen(msg));
-	tcgetattr (0, &termios);
+	showmsg();
+	tcgetattr(0, &termios);
 	*ti = termios;
 	cfmakeraw(&termios);
 	tcsetattr(0, TCSANOW, &termios);
