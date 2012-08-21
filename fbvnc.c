@@ -221,6 +221,9 @@ static int rat_event(int fd, int ratfd)
 	int mask = 0;
 	if (read(ratfd, &ie, sizeof(ie)) != 3)
 		return -1;
+	/* ignore mouse movements when nodraw */
+	if (nodraw)
+		return 0;
 	mc += ie[1];
 	mr -= ie[2];
 	mc = MAX(0, MIN(cols - 1, mc));
