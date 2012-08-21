@@ -1,9 +1,9 @@
 /*
  * fbvnc - a small linux framebuffer vnc viewer
  *
- * Copyright (C) 2009-2011 Ali Gholami Rudi
+ * Copyright (C) 2009-2012 Ali Gholami Rudi
  *
- * This program is released under GNU GPL version 2.
+ * This program is released under the modified BSD license.
  */
 #include <arpa/inet.h>
 #include <ctype.h>
