@@ -1,7 +1,7 @@
 /*
  * fbvnc - a small linux framebuffer vnc viewer
  *
- * Copyright (C) 2009-2012 Ali Gholami Rudi
+ * Copyright (C) 2009-2013 Ali Gholami Rudi
  *
  * This program is released under the modified BSD license.
  */
@@ -25,21 +25,18 @@
 #include "draw.h"
 #include "vnc.h"
 
-/* framebuffer depth */
-typedef unsigned int fbval_t;
-
-/* optimized version of fb_val() */
-#define FB_VAL(r, g, b)	fb_val((r), (g), (b))
-
 #define MIN(a, b)	((a) < (b) ? (a) : (b))
 #define MAX(a, b)	((a) > (b) ? (a) : (b))
+#define OUT(msg)	write(1, (msg), strlen(msg))
 
-#define VNC_PORT		"5900"
+#define VNC_PORT	"5900"
+#define SCRSCRL		2
+#define MAXRES		(1 << 16)
 
-#define MAXRES			(1 << 21)
-#define MIN(a, b)		((a) < (b) ? (a) : (b))
-
-static int cols, rows;
+static int cols, rows;		/* framebuffer dimensions */
+static int bpp;			/* bytes per pixel */
+static int srv_cols, srv_rows;	/* server screen dimensions */
+static int or, oc;		/* visible screen offset */
 static int mr, mc;		/* mouse position */
 static int nodraw;		/* don't draw anything */
 
@@ -69,9 +66,19 @@ static int vnc_connect(char *addr, char *port)
 	return fd;
 }
 
+static void fbmode_bits(int *rr, int *rg, int *rb)
+{
+	int mode = FBM_COLORS(fb_mode());
+	*rr = (mode >> 8) & 0xf;
+	*rg = (mode >> 4) & 0xf;
+	*rb = (mode >> 0) & 0xf;
+}
+
 static int vnc_init(int fd)
 {
 	char vncver[] = "RFB 003.003\n";
+	int rr, rg, rb;
+
 	struct vnc_client_init clientinit;
 	struct vnc_server_init serverinit;
 	struct vnc_client_pixelfmt pixfmt_cmd;
@@ -91,31 +98,31 @@ static int vnc_init(int fd)
 
 	if (fb_init())
 		return -1;
-	if (FBM_BPP(fb_mode()) != sizeof(fbval_t)) {
-		fprintf(stderr, "fbvnc: fbval_t doesn't match fb depth\n");
-		exit(1);
-	}
-	cols = MIN(ntohs(serverinit.w), fb_cols());
-	rows = MIN(ntohs(serverinit.h), fb_rows());
+	srv_cols = ntohs(serverinit.w);
+	srv_rows = ntohs(serverinit.h);
+	cols = MIN(srv_cols, fb_cols());
+	rows = MIN(srv_rows, fb_rows());
+	bpp = FBM_BPP(fb_mode());
 	mr = rows / 2;
 	mc = cols / 2;
 
 	read(fd, buf, ntohl(serverinit.len));
 	pixfmt_cmd.type = VNC_CLIENT_PIXFMT;
-	pixfmt_cmd.format.bpp = 8;
-	pixfmt_cmd.format.depth = 8;
+	pixfmt_cmd.format.bpp = bpp << 3;
+	pixfmt_cmd.format.depth = bpp << 3;
 	pixfmt_cmd.format.bigendian = 0;
 	pixfmt_cmd.format.truecolor = 1;
 
-	pixfmt_cmd.format.rmax = htons(3);
-	pixfmt_cmd.format.gmax = htons(7);
-	pixfmt_cmd.format.bmax = htons(7);
-	pixfmt_cmd.format.rshl = 0;
-	pixfmt_cmd.format.gshl = 2;
-	pixfmt_cmd.format.bshl = 5;
-
+	fbmode_bits(&rr, &rg, &rb);
+	pixfmt_cmd.format.rmax = htons((1 << rr) - 1);
+	pixfmt_cmd.format.gmax = htons((1 << rg) - 1);
+	pixfmt_cmd.format.bmax = htons((1 << rb) - 1);
+	/* assuming colors packed as RGB; shall handle other cases later */
+	pixfmt_cmd.format.rshl = rg + rb;
+	pixfmt_cmd.format.gshl = rb;
+	pixfmt_cmd.format.bshl = 0;
 	write(fd, &pixfmt_cmd, sizeof(pixfmt_cmd));
-	return fd;
+	return 0;
 }
 
 static int vnc_free(void)
@@ -129,28 +136,24 @@ static int vnc_refresh(int fd, int inc)
 	struct vnc_client_fbup fbup_req;
 	fbup_req.type = VNC_CLIENT_FBUP;
 	fbup_req.inc = inc;
-	fbup_req.x = htons(0);
-	fbup_req.y = htons(0);
+	fbup_req.x = htons(oc);
+	fbup_req.y = htons(or);
 	fbup_req.w = htons(cols);
 	fbup_req.h = htons(rows);
-	write(fd, &fbup_req, sizeof(fbup_req));
-	return 0;
+	return write(fd, &fbup_req, sizeof(fbup_req)) != sizeof(fbup_req);
 }
 
 static void drawfb(char *s, int x, int y, int w, int h)
 {
-	fbval_t slice[1 << 14];
-	int i, j;
-	for (i = 0; i < h; i++) {
-		for (j = 0; j < w; j++) {
-			int c = *(unsigned char *) &s[i * w + j];
-			int r = (c & 0x3) << 6;
-			int g = ((c >> 2) & 0x7) << 5;
-			int b = ((c >> 5) & 0x7) << 5;
-			slice[j] = FB_VAL(r, g, b);
-		}
-		fb_set(y + i, x, slice, w);
-	}
+	int sc;		/* screen column offset */
+	int bc, bw;	/* buffer column offset / row width */
+	int i;
+	sc = MAX(0, x - oc);
+	bc = x > oc ? 0 : oc - x;
+	bw = x + w < oc + cols ? w - bc : w - bc - (x + w - oc - cols);
+	for (i = y; i < y + h; i++)
+		if (i - or >= 0 && i - or < rows && bw > 0)
+			fb_set(i - or, sc, s + ((i - y) * w + bc) * bpp, bw);
 }
 
 static void xread(int fd, void *buf, int len)
@@ -172,7 +175,7 @@ static int vnc_event(int fd)
 	struct vnc_server_fbup *fbup = (void *) msg;
 	struct vnc_server_cuttext *cuttext = (void *) msg;
 	struct vnc_server_colormap *colormap = (void *) msg;
-	int j;
+	int i, j;
 	int n;
 
 	if (read(fd, msg, 1) != 1)
@@ -188,13 +191,15 @@ static int vnc_event(int fd)
 			y = ntohs(uprect.y);
 			w = ntohs(uprect.w);
 			h = ntohs(uprect.h);
-			if (x >= cols || x + w > cols)
+			if (x >= srv_cols || x + w > srv_cols)
 				return -1;
-			if (y >= rows || y + h > rows)
+			if (y >= srv_rows || y + h > srv_rows)
 				return -1;
-			xread(fd, buf, w * h);
-			if (!nodraw)
-				drawfb(buf, x, y, w, h);
+			for (i = 0; i < h; i++) {
+				xread(fd, buf, w * bpp);
+				if (!nodraw)
+					drawfb(buf, x, y + i, w, 1);
+			}
 		}
 		break;
 	case VNC_SERVER_BELL:
@@ -216,28 +221,46 @@ static int vnc_event(int fd)
 
 static int rat_event(int fd, int ratfd)
 {
-	char ie[3];
+	char ie[4];
 	struct vnc_client_ratevent me = {VNC_CLIENT_RATEVENT};
 	int mask = 0;
-	if (read(ratfd, &ie, sizeof(ie)) != 3)
+	int or_ = or, oc_ = oc;
+	if (read(ratfd, &ie, sizeof(ie)) != 4)
 		return -1;
 	/* ignore mouse movements when nodraw */
 	if (nodraw)
 		return 0;
 	mc += ie[1];
 	mr -= ie[2];
-	mc = MAX(0, MIN(cols - 1, mc));
-	mr = MAX(0, MIN(rows - 1, mr));
+
+	if (mc < oc)
+		oc = MAX(0, oc - cols / SCRSCRL);
+	if (mc >= oc + cols && oc + cols < srv_cols)
+		oc = MIN(srv_cols - cols, oc + cols / SCRSCRL);
+	if (mr < or)
+		or = MAX(0, or - rows / SCRSCRL);
+	if (mr >= or + rows && or + rows < srv_rows)
+		or = MIN(srv_rows - rows, or + rows / SCRSCRL);
+	mc = MAX(oc, MIN(oc + cols - 1, mc));
+	mr = MAX(or, MIN(or + rows - 1, mr));
 	if (ie[0] & 0x01)
 		mask |= VNC_BUTTON1_MASK;
 	if (ie[0] & 0x04)
 		mask |= VNC_BUTTON2_MASK;
 	if (ie[0] & 0x02)
 		mask |= VNC_BUTTON3_MASK;
+	if (ie[3] > 0)		/* wheel up */
+		mask |= VNC_BUTTON4_MASK;
+	if (ie[3] < 0)		/* wheel down */
+		mask |= VNC_BUTTON5_MASK;
+
 	me.y = htons(mr);
 	me.x = htons(mc);
 	me.mask = mask;
 	write(fd, &me, sizeof(me));
+	if (or != or_ || oc != oc_)
+		if (vnc_refresh(fd, 0))
+			return -1;
 	return 0;
 }
 
@@ -251,8 +274,7 @@ static int press(int fd, int key, int down)
 
 static void showmsg(void)
 {
-	char *msg = "\x1b[H\t\t\t*** fbvnc ***\r";
-	write(STDOUT_FILENO, msg, strlen(msg));
+	OUT("\x1b[H\t\t\t*** fbvnc ***\r");
 }
 
 static int kbd_event(int fd, int kbdfd)
@@ -336,11 +358,8 @@ static int kbd_event(int fd, int kbdfd)
 static void term_setup(struct termios *ti)
 {
 	struct termios termios;
-	char *hide = "\x1b[?25l";
-	char *clear = "\x1b[2J";
-
-	write(STDIN_FILENO, hide, strlen(hide));
-	write(STDOUT_FILENO, clear, strlen(clear));
+	OUT("\033[2J");		/* clear the screen */
+	OUT("\033[?25l");	/* hide the cursor */
 	showmsg();
 	tcgetattr(0, &termios);
 	*ti = termios;
@@ -350,9 +369,8 @@ static void term_setup(struct termios *ti)
 
 static void term_cleanup(struct termios *ti)
 {
-	char *show = "\x1b[?25h";
 	tcsetattr(0, TCSANOW, ti);
-	write(STDIN_FILENO, show, strlen(show));
+	OUT("\r\n\033[?25h");	/* show the cursor */
 }
 
 static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
@@ -401,16 +419,21 @@ int main(int argc, char * argv[])
 		host = argv[1];
 	if (argc >= 3)
 		port = argv[2];
-	if ((vnc_fd = vnc_connect(host, port)) == -1) {
+	if ((vnc_fd = vnc_connect(host, port)) < 0) {
 		fprintf(stderr, "could not connect!\n");
 		return 1;
 	}
-	if (vnc_init(vnc_fd) == -1) {
+	if (vnc_init(vnc_fd) < 0) {
+		close(vnc_fd);
 		fprintf(stderr, "vnc init failed!\n");
 		return 1;
 	}
 	term_setup(&ti);
-	rat_fd = open("/dev/input/mice", O_RDONLY);
+
+	/* entering intellimouse for using mouse wheel */
+	rat_fd = open("/dev/input/mice", O_RDWR);
+	write(rat_fd, "\xf3\xc8\xf3\x64\xf3\x50", 6);
+	read(rat_fd, buf, 1);
 
 	mainloop(vnc_fd, 0, rat_fd);
 

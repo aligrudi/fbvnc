@@ -25,9 +25,11 @@
 #define VNC_ENC_CORRE		4
 #define VNC_ENC_HEXTILE		5
 
-#define VNC_BUTTON1_MASK	0x1
-#define VNC_BUTTON2_MASK	0x2
-#define VNC_BUTTON3_MASK	0x4
+#define VNC_BUTTON1_MASK	0x01
+#define VNC_BUTTON2_MASK	0x02
+#define VNC_BUTTON3_MASK	0x04
+#define VNC_BUTTON4_MASK	0x10
+#define VNC_BUTTON5_MASK	0x08
 
 typedef unsigned char u8;
 typedef unsigned short u16;
