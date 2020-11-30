@@ -76,7 +76,7 @@ static void fbmode_bits(int *rr, int *rg, int *rb)
 
 static int vnc_init(int fd)
 {
-	char vncver[] = "RFB 003.003\n";
+	char vncver[16];
 	int rr, rg, rb;
 
 	struct vnc_client_init clientinit;
@@ -84,8 +84,9 @@ static int vnc_init(int fd)
 	struct vnc_client_pixelfmt pixfmt_cmd;
 	int connstat = VNC_CONN_FAILED;
 
-	write(fd, vncver, 12);
 	read(fd, vncver, 12);
+	strcpy(vncver, "RFB 003.003\n");
+	write(fd, vncver, 12);
 
 	read(fd, &connstat, sizeof(connstat));
 
