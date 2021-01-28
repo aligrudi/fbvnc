@@ -6,18 +6,18 @@
 #define VNC_AUTH_FAILED		1
 #define VNC_AUTH_TOOMANY	2
 
-#define VNC_SERVER_FBUP		0
-#define VNC_SERVER_COLORMAP	1
-#define VNC_SERVER_BELL		2
-#define VNC_SERVER_CUTTEXT	3
+#define VNC_UPDATE		0
+#define VNC_SERVERCOLORMAP	1
+#define VNC_BELL		2
+#define VNC_SERVERCUTTEXT	3
 
-#define VNC_CLIENT_PIXFMT	0
-#define VNC_CLIENT_COLORMAP	1
-#define VNC_CLIENT_SETENC	2
-#define VNC_CLIENT_FBUP		3
-#define VNC_CLIENT_KEYEVENT	4
-#define VNC_CLIENT_RATEVENT	5
-#define VNC_CLIENT_CUTTEXT	6
+#define VNC_SETPIXELFORMAT	0
+#define VNC_SETCOLORMAPENTRIES	1
+#define VNC_SETENCODING		2
+#define VNC_UPDATEREQUEST	3
+#define VNC_KEYEVENT		4
+#define VNC_POINTEREVENT	5
+#define VNC_CLIENTCUTTEXT	6
 
 #define VNC_ENC_RAW		0
 #define VNC_ENC_COPYRECT	1
@@ -35,7 +35,7 @@ typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
 
-struct vnc_pixelfmt {
+struct vnc_pixelformat {
 	u8 bpp;
 	u8 depth;
 	u8 bigendian;
@@ -46,21 +46,20 @@ struct vnc_pixelfmt {
 	u8 rshl;
 	u8 gshl;
 	u8 bshl;
-
 	u8 pad1;
 	u16 pad2;
 };
 
-struct vnc_client_init {
+struct vnc_clientinit {
 	u8 shared;
 };
 
-struct vnc_server_init {
-    u16 w;
-    u16 h;
-    struct vnc_pixelfmt fmt;
-    u32 len;
-    /* char name[len]; */
+struct vnc_serverinit {
+	u16 w;
+	u16 h;
+	struct vnc_pixelformat fmt;
+	u32 len;
+	/* char name[len]; */
 };
 
 struct vnc_rect {
@@ -70,14 +69,14 @@ struct vnc_rect {
 	/* rect bytes */
 };
 
-struct vnc_server_fbup {
-    u8 type;
-    u8 pad;
-    u16 n;
-    /* struct vnc_rect rects[n]; */
+struct vnc_update {
+	u8 type;
+	u8 pad;
+	u16 n;
+	/* struct vnc_rect rects[n]; */
 };
 
-struct vnc_server_cuttext {
+struct vnc_servercuttext {
 	u8 type;
 	u8 pad1;
 	u16 pad2;
@@ -85,7 +84,7 @@ struct vnc_server_cuttext {
 	/* char text[length] */
 };
 
-struct vnc_server_colormap {
+struct vnc_setcolormapentries {
 	u8 type;
 	u8 pad;
 	u16 first;
@@ -93,14 +92,21 @@ struct vnc_server_colormap {
 	/* u8 colors[n * 3 * 2]; */
 };
 
-struct vnc_client_pixelfmt {
+struct vnc_setpixelformat {
 	u8 type;
 	u8 pad1;
 	u16 pad2;
-	struct vnc_pixelfmt format;
+	struct vnc_pixelformat format;
 };
 
-struct vnc_client_fbup {
+struct vnc_setencoding {
+	u8 type;
+	u8 pad;
+	u16 n;
+	/* s32[n] */
+};
+
+struct vnc_updaterequest {
 	u8 type;
 	u8 inc;
 	u16 x;
@@ -109,14 +115,14 @@ struct vnc_client_fbup {
 	u16 h;
 };
 
-struct vnc_client_keyevent {
+struct vnc_keyevent {
 	u8 type;
 	u8 down;
 	u16 pad;
 	u32 key;
 };
 
-struct vnc_client_ratevent {
+struct vnc_pointerevent {
 	u8 type;
 	u8 mask;
 	u16 x;

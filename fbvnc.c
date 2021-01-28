@@ -1,7 +1,7 @@
 /*
  * FBVNC: a small Linux framebuffer VNC viewer
  *
- * Copyright (C) 2009-2020 Ali Gholami Rudi
+ * Copyright (C) 2009-2021 Ali Gholami Rudi
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -88,51 +88,59 @@ static int vnc_init(int fd)
 {
 	char vncver[16];
 	int rr, rg, rb;
-
-	struct vnc_client_init clientinit;
-	struct vnc_server_init serverinit;
-	struct vnc_client_pixelfmt pixfmt_cmd;
+	struct vnc_clientinit clientinit;
+	struct vnc_serverinit serverinit;
+	struct vnc_setpixelformat pixfmt_cmd;
+	struct vnc_setencoding enc_cmd;
+	u32 enc[] = {VNC_ENC_RAW};
 	int connstat = VNC_CONN_FAILED;
 
+	/* handshake */
 	read(fd, vncver, 12);
 	strcpy(vncver, "RFB 003.003\n");
 	write(fd, vncver, 12);
-
 	read(fd, &connstat, sizeof(connstat));
-
 	if (ntohl(connstat) != VNC_CONN_NOAUTH)
 		return -1;
-
 	clientinit.shared = 1;
 	write(fd, &clientinit, sizeof(clientinit));
 	read(fd, &serverinit, sizeof(serverinit));
-
-	if (fb_init())
-		return -1;
+	read(fd, buf, ntohl(serverinit.len));
 	srv_cols = ntohs(serverinit.w);
 	srv_rows = ntohs(serverinit.h);
+
+	/* set up the framebuffer */
+	if (fb_init())
+		return -1;
 	cols = MIN(srv_cols, fb_cols());
 	rows = MIN(srv_rows, fb_rows());
 	bpp = FBM_BPP(fb_mode());
 	mr = rows / 2;
 	mc = cols / 2;
 
-	read(fd, buf, ntohl(serverinit.len));
-	pixfmt_cmd.type = VNC_CLIENT_PIXFMT;
+	/* send framebuffer configuration */
+	pixfmt_cmd.type = VNC_SETPIXELFORMAT;
 	pixfmt_cmd.format.bpp = bpp << 3;
 	pixfmt_cmd.format.depth = bpp << 3;
 	pixfmt_cmd.format.bigendian = 0;
 	pixfmt_cmd.format.truecolor = 1;
-
 	fbmode_bits(&rr, &rg, &rb);
 	pixfmt_cmd.format.rmax = htons((1 << rr) - 1);
 	pixfmt_cmd.format.gmax = htons((1 << rg) - 1);
 	pixfmt_cmd.format.bmax = htons((1 << rb) - 1);
+
 	/* assuming colors packed as RGB; shall handle other cases later */
 	pixfmt_cmd.format.rshl = rg + rb;
 	pixfmt_cmd.format.gshl = rb;
 	pixfmt_cmd.format.bshl = 0;
 	write(fd, &pixfmt_cmd, sizeof(pixfmt_cmd));
+
+	/* send pixel format */
+	enc_cmd.type = VNC_SETENCODING;
+	enc_cmd.pad = 0;
+	enc_cmd.n = htons(1);
+	write(fd, &enc_cmd, sizeof(enc_cmd));
+	write(fd, enc, ntohs(enc_cmd.n) * sizeof(enc[0]));
 	return 0;
 }
 
@@ -144,8 +152,8 @@ static int vnc_free(void)
 
 static int vnc_refresh(int fd, int inc)
 {
-	struct vnc_client_fbup fbup_req;
-	fbup_req.type = VNC_CLIENT_FBUP;
+	struct vnc_updaterequest fbup_req;
+	fbup_req.type = VNC_UPDATEREQUEST;
 	fbup_req.inc = inc;
 	fbup_req.x = htons(oc);
 	fbup_req.y = htons(or);
@@ -183,16 +191,16 @@ static int vnc_event(int fd)
 {
 	struct vnc_rect uprect;
 	char msg[1 << 12];
-	struct vnc_server_fbup *fbup = (void *) msg;
-	struct vnc_server_cuttext *cuttext = (void *) msg;
-	struct vnc_server_colormap *colormap = (void *) msg;
+	struct vnc_update *fbup = (void *) msg;
+	struct vnc_servercuttext *cuttext = (void *) msg;
+	struct vnc_setcolormapentries *colormap = (void *) msg;
 	int i, j;
 	int n;
 
 	if (read(fd, msg, 1) != 1)
 		return -1;
 	switch (msg[0]) {
-	case VNC_SERVER_FBUP:
+	case VNC_UPDATE:
 		xread(fd, msg + 1, sizeof(*fbup) - 1);
 		n = ntohs(fbup->n);
 		for (j = 0; j < n; j++) {
@@ -213,13 +221,13 @@ static int vnc_event(int fd)
 			}
 		}
 		break;
-	case VNC_SERVER_BELL:
+	case VNC_BELL:
 		break;
-	case VNC_SERVER_CUTTEXT:
+	case VNC_SERVERCUTTEXT:
 		xread(fd, msg + 1, sizeof(*cuttext) - 1);
 		xread(fd, buf, ntohl(cuttext->len));
 		break;
-	case VNC_SERVER_COLORMAP:
+	case VNC_SETCOLORMAPENTRIES:
 		xread(fd, msg + 1, sizeof(*colormap) - 1);
 		xread(fd, buf, ntohs(colormap->n) * 3 * 2);
 		break;
@@ -232,11 +240,11 @@ static int vnc_event(int fd)
 
 static int rat_event(int fd, int ratfd)
 {
-	char ie[4];
-	struct vnc_client_ratevent me = {VNC_CLIENT_RATEVENT};
+	char ie[4] = {0};
+	struct vnc_pointerevent me = {VNC_POINTEREVENT};
 	int mask = 0;
 	int or_ = or, oc_ = oc;
-	if (read(ratfd, &ie, sizeof(ie)) != 4)
+	if (ratfd > 0 && read(ratfd, &ie, sizeof(ie)) != 4)
 		return -1;
 	/* ignore mouse movements when nodraw */
 	if (nodraw)
@@ -277,7 +285,7 @@ static int rat_event(int fd, int ratfd)
 
 static int press(int fd, int key, int down)
 {
-	struct vnc_client_keyevent ke = {VNC_CLIENT_KEYEVENT};
+	struct vnc_keyevent ke = {VNC_KEYEVENT};
 	ke.key = htonl(key);
 	ke.down = down;
 	return write(fd, &ke, sizeof(ke));
@@ -347,7 +355,7 @@ static int kbd_event(int fd, int kbdfd)
 		default:
 			k = (unsigned char) key[i];
 		}
-		if (k >= 'A' && k <= 'Z' || strchr(":\"<>?{}|+_()*&^%$#@!~", k))
+		if ((k >= 'A' && k <= 'Z') || strchr(":\"<>?{}|+_()*&^%$#@!~", k))
 			mod[nmod++] = 0xffe1;
 		if (k >= 1 && k <= 26) {
 			k = 'a' + k - 1;
@@ -395,6 +403,7 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 	ufds[1].events = POLLIN;
 	ufds[2].fd = rat_fd;
 	ufds[2].events = POLLIN;
+	rat_event(vnc_fd, -1);
 	if (vnc_refresh(vnc_fd, 0))
 		return;
 	while (1) {
