@@ -92,7 +92,7 @@ static int vnc_init(int fd)
 	struct vnc_serverinit serverinit;
 	struct vnc_setpixelformat pixfmt_cmd;
 	struct vnc_setencoding enc_cmd;
-	u32 enc[] = {VNC_ENC_RAW};
+	u32 enc[] = {htonl(VNC_ENC_RAW), htonl(VNC_ENC_RRE)};
 	int connstat = VNC_CONN_FAILED;
 
 	/* handshake */
@@ -138,7 +138,7 @@ static int vnc_init(int fd)
 	/* send pixel format */
 	enc_cmd.type = VNC_SETENCODING;
 	enc_cmd.pad = 0;
-	enc_cmd.n = htons(1);
+	enc_cmd.n = htons(2);
 	write(fd, &enc_cmd, sizeof(enc_cmd));
 	write(fd, enc, ntohs(enc_cmd.n) * sizeof(enc[0]));
 	return 0;
@@ -187,14 +187,62 @@ static void xread(int fd, void *buf, int len)
 	}
 }
 
-static int vnc_event(int fd)
+static void drawrect(char *pixel, int x, int y, int w, int h)
+{
+	int i;
+	for (i = 0; i < w; i++)
+		memcpy(buf + i * bpp, pixel, bpp);
+	for (i = 0; i < h; i++)
+		drawfb(buf, x, y + i, w, 1);
+}
+
+static int readrect(int fd)
 {
 	struct vnc_rect uprect;
+	int x, y, w, h;
+	int i;
+	xread(fd, &uprect, sizeof(uprect));
+	x = ntohs(uprect.x);
+	y = ntohs(uprect.y);
+	w = ntohs(uprect.w);
+	h = ntohs(uprect.h);
+	if (x >= srv_cols || x + w > srv_cols)
+		return -1;
+	if (y >= srv_rows || y + h > srv_rows)
+		return -1;
+	if (uprect.enc == htonl(VNC_ENC_RAW)) {
+		for (i = 0; i < h; i++) {
+			xread(fd, buf, w * bpp);
+			if (!nodraw)
+				drawfb(buf, x, y + i, w, 1);
+		}
+	}
+	if (uprect.enc == htonl(VNC_ENC_RRE)) {
+		char pixel[8];
+		u32 n;
+		xread(fd, &n, 4);
+		xread(fd, pixel, bpp);
+		if (!nodraw)
+			drawrect(pixel, x, y, w, h);
+		for (i = 0; i < ntohl(n); i++) {
+			u16 pos[4];
+			xread(fd, pixel, bpp);
+			xread(fd, pos, 8);
+			if (!nodraw)
+				drawrect(pixel, x + ntohs(pos[0]), y + ntohs(pos[1]),
+					ntohs(pos[2]), ntohs(pos[3]));
+		}
+	}
+	return 0;
+}
+
+static int vnc_event(int fd)
+{
 	char msg[1 << 12];
 	struct vnc_update *fbup = (void *) msg;
 	struct vnc_servercuttext *cuttext = (void *) msg;
 	struct vnc_setcolormapentries *colormap = (void *) msg;
-	int i, j;
+	int i;
 	int n;
 
 	if (read(fd, msg, 1) != 1)
@@ -203,23 +251,9 @@ static int vnc_event(int fd)
 	case VNC_UPDATE:
 		xread(fd, msg + 1, sizeof(*fbup) - 1);
 		n = ntohs(fbup->n);
-		for (j = 0; j < n; j++) {
-			int x, y, w, h;
-			xread(fd, &uprect, sizeof(uprect));
-			x = ntohs(uprect.x);
-			y = ntohs(uprect.y);
-			w = ntohs(uprect.w);
-			h = ntohs(uprect.h);
-			if (x >= srv_cols || x + w > srv_cols)
+		for (i = 0; i < n; i++)
+			if (readrect(fd))
 				return -1;
-			if (y >= srv_rows || y + h > srv_rows)
-				return -1;
-			for (i = 0; i < h; i++) {
-				xread(fd, buf, w * bpp);
-				if (!nodraw)
-					drawfb(buf, x, y + i, w, 1);
-			}
-		}
 		break;
 	case VNC_BELL:
 		break;
