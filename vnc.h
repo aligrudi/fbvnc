@@ -24,6 +24,10 @@
 #define VNC_ENC_RRE		2
 #define VNC_ENC_CORRE		4
 #define VNC_ENC_HEXTILE		5
+#define VNC_ENC_ZLIB		6
+#define VNC_ENC_TIGHT		7
+#define VNC_ENC_ZLIBHEX		8
+#define VNC_ENC_ZRLE		16
 
 #define VNC_BUTTON1_MASK	0x01
 #define VNC_BUTTON2_MASK	0x02
