@@ -1,5 +1,5 @@
 CC = cc
-CFLAGS = -Wall -Os
+CFLAGS = -Wall -O2
 LDFLAGS =
 
 all: fbvnc
