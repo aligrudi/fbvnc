@@ -1,6 +1,6 @@
 CC = cc
 CFLAGS = -Wall -O2
-LDFLAGS =
+LDFLAGS = -lz
 
 OBJS = fbvnc.o draw.o
 

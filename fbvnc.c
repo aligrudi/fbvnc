@@ -33,6 +33,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <linux/input.h>
+#include <zlib.h>
 #include "draw.h"
 #include "vnc.h"
 
@@ -55,6 +56,91 @@ static long vnc_nr;		/* number of bytes received */
 static long vnc_nw;		/* number of bytes sent */
 
 static char buf[MAXRES];
+
+static z_stream zstr;
+static char *z_out;
+static int z_outlen;
+static int z_outsize;
+static int z_outpos;
+
+static int vread(int fd, void *buf, long len)
+{
+	long nr = 0;
+	long n;
+	while (nr < len && (n = read(fd, buf + nr, len - nr)) > 0)
+		nr += n;
+	vnc_nr += nr;
+	if (nr < len)
+		printf("fbvnc: partial vnc read!\n");
+	return nr < len ? -1 : len;
+}
+
+static int vwrite(int fd, void *buf, long len)
+{
+	int nw = write(fd, buf, len);
+	if (nw != len)
+		printf("fbvnc: partial vnc write!\n");
+	vnc_nw += len;
+	return nw < len ? -1 : nw;
+}
+
+static int z_init(void)
+{
+	zstr.zalloc = Z_NULL;
+	zstr.zfree = Z_NULL;
+	zstr.opaque = Z_NULL;
+	zstr.avail_in = 0;
+	zstr.next_in = Z_NULL;
+	if (inflateInit(&zstr) != Z_OK) {
+		fprintf(stderr, "fbvnc: failed to initialize a zlib stream\n");
+		return 1;
+	}
+	return 0;
+}
+
+static int z_push(void *src, int len)
+{
+	z_outlen = 0;
+	z_outpos = 0;
+	zstr.next_in = src;
+	zstr.avail_in = len;
+	while (zstr.avail_in > 0) {
+		int nr;
+		zstr.avail_out = sizeof(buf);
+		zstr.next_out = (void *) buf;
+		if (inflate(&zstr, Z_NO_FLUSH) != Z_OK)
+			return 1;
+		nr = sizeof(buf) - zstr.avail_out;
+		if (z_outlen + nr > z_outsize) {
+			char *old = z_out;
+			while (z_outlen + nr > z_outsize)
+				z_outsize = MAX(z_outsize, 4096) * 2;
+			z_out = malloc(z_outsize);
+			if (z_outlen)
+				memcpy(z_out, old, z_outlen);
+			free(old);
+		}
+		memcpy(z_out + z_outlen, buf, nr);
+		z_outlen += nr;
+	}
+	return 0;
+}
+
+static int z_read(void *dst, int len)
+{
+	if (z_outpos + len > z_outlen)
+		return 1;
+	memcpy(dst, z_out + z_outpos, len);
+	z_outpos += len;
+	return 0;
+}
+
+static int z_free(void)
+{
+	inflateEnd(&zstr);
+	free(z_out);
+	return 0;
+}
 
 static int vnc_connect(char *addr, char *port)
 {
@@ -88,27 +174,6 @@ static void fbmode_bits(int *rr, int *rg, int *rb)
 	*rb = (mode >> 0) & 0xf;
 }
 
-static int vread(int fd, void *buf, long len)
-{
-	long nr = 0;
-	long n;
-	while (nr < len && (n = read(fd, buf + nr, len - nr)) > 0)
-		nr += n;
-	vnc_nr += nr;
-	if (nr < len)
-		printf("fbvnc: partial vnc read!\n");
-	return nr < len ? -1 : len;
-}
-
-static int vwrite(int fd, void *buf, long len)
-{
-	int nw = write(fd, buf, len);
-	if (nw != len)
-		printf("fbvnc: partial vnc write!\n");
-	vnc_nw += len;
-	return nw < len ? -1 : nw;
-}
-
 static int vnc_init(int fd)
 {
 	char vncver[16];
@@ -117,7 +182,7 @@ static int vnc_init(int fd)
 	struct vnc_serverinit serverinit;
 	struct vnc_setpixelformat pixfmt_cmd;
 	struct vnc_setencoding enc_cmd;
-	u32 enc[] = {htonl(VNC_ENC_RAW), htonl(VNC_ENC_RRE)};
+	u32 enc[] = {htonl(VNC_ENC_ZLIB), htonl(VNC_ENC_RRE), htonl(VNC_ENC_RAW)};
 	int connstat = VNC_CONN_FAILED;
 
 	/* handshake */
@@ -167,14 +232,18 @@ static int vnc_init(int fd)
 	/* send pixel format */
 	enc_cmd.type = VNC_SETENCODING;
 	enc_cmd.pad = 0;
-	enc_cmd.n = htons(2);
+	enc_cmd.n = htons(3);
 	vwrite(fd, &enc_cmd, sizeof(enc_cmd));
 	vwrite(fd, enc, ntohs(enc_cmd.n) * sizeof(enc[0]));
+
+	/* initialize zlib */
+	z_init();
 	return 0;
 }
 
 static int vnc_free(void)
 {
+	z_free();
 	fb_free();
 	return 0;
 }
@@ -257,6 +326,20 @@ static int readrect(int fd)
 			if (!nodraw)
 				drawrect(pixel, x + ntohs(pos[0]), y + ntohs(pos[1]),
 					ntohs(pos[2]), ntohs(pos[3]));
+		}
+	}
+	if (uprect.enc == htonl(VNC_ENC_ZLIB)) {
+		int zlen;
+		char *zdat;
+		vread(fd, &zlen, 4);
+		zdat = malloc(ntohl(zlen));
+		vread(fd, zdat, ntohl(zlen));
+		z_push(zdat, ntohl(zlen));
+		free(zdat);
+		for (i = 0; i < h; i++) {
+			z_read(buf, w * bpp);
+			if (!nodraw)
+				drawfb(buf, x, y + i, w, 1);
 		}
 	}
 	return 0;
