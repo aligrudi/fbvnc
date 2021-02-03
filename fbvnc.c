@@ -49,6 +49,8 @@ static int srv_cols, srv_rows;	/* server screen dimensions */
 static int or, oc;		/* visible screen offset */
 static int mr, mc;		/* mouse position */
 static int nodraw;		/* don't draw anything */
+static long vnc_nr;		/* number of bytes received */
+static long vnc_nw;		/* number of bytes sent */
 
 static char buf[MAXRES];
 
@@ -84,6 +86,27 @@ static void fbmode_bits(int *rr, int *rg, int *rb)
 	*rb = (mode >> 0) & 0xf;
 }
 
+static int vread(int fd, void *buf, long len)
+{
+	long nr = 0;
+	long n;
+	while (nr < len && (n = read(fd, buf + nr, len - nr)) > 0)
+		nr += n;
+	vnc_nr += nr;
+	if (nr < len)
+		printf("fbvnc: partial vnc read!\n");
+	return nr < len ? -1 : len;
+}
+
+static int vwrite(int fd, void *buf, long len)
+{
+	int nw = write(fd, buf, len);
+	if (nw != len)
+		printf("fbvnc: partial vnc write!\n");
+	vnc_nw += len;
+	return nw < len ? -1 : nw;
+}
+
 static int vnc_init(int fd)
 {
 	char vncver[16];
@@ -96,16 +119,20 @@ static int vnc_init(int fd)
 	int connstat = VNC_CONN_FAILED;
 
 	/* handshake */
-	read(fd, vncver, 12);
+	if (vread(fd, vncver, 12) < 0)
+		return -1;
 	strcpy(vncver, "RFB 003.003\n");
-	write(fd, vncver, 12);
-	read(fd, &connstat, sizeof(connstat));
+	vwrite(fd, vncver, 12);
+	if (vread(fd, &connstat, sizeof(connstat)) < 0)
+		return -1;
 	if (ntohl(connstat) != VNC_CONN_NOAUTH)
 		return -1;
 	clientinit.shared = 1;
-	write(fd, &clientinit, sizeof(clientinit));
-	read(fd, &serverinit, sizeof(serverinit));
-	read(fd, buf, ntohl(serverinit.len));
+	vwrite(fd, &clientinit, sizeof(clientinit));
+	if (vread(fd, &serverinit, sizeof(serverinit)) < 0)
+		return -1;
+	if (vread(fd, buf, ntohl(serverinit.len)) < 0)
+		return -1;
 	srv_cols = ntohs(serverinit.w);
 	srv_rows = ntohs(serverinit.h);
 
@@ -133,14 +160,14 @@ static int vnc_init(int fd)
 	pixfmt_cmd.format.rshl = rg + rb;
 	pixfmt_cmd.format.gshl = rb;
 	pixfmt_cmd.format.bshl = 0;
-	write(fd, &pixfmt_cmd, sizeof(pixfmt_cmd));
+	vwrite(fd, &pixfmt_cmd, sizeof(pixfmt_cmd));
 
 	/* send pixel format */
 	enc_cmd.type = VNC_SETENCODING;
 	enc_cmd.pad = 0;
 	enc_cmd.n = htons(2);
-	write(fd, &enc_cmd, sizeof(enc_cmd));
-	write(fd, enc, ntohs(enc_cmd.n) * sizeof(enc[0]));
+	vwrite(fd, &enc_cmd, sizeof(enc_cmd));
+	vwrite(fd, enc, ntohs(enc_cmd.n) * sizeof(enc[0]));
 	return 0;
 }
 
@@ -159,7 +186,7 @@ static int vnc_refresh(int fd, int inc)
 	fbup_req.y = htons(or);
 	fbup_req.w = htons(cols);
 	fbup_req.h = htons(rows);
-	return write(fd, &fbup_req, sizeof(fbup_req)) != sizeof(fbup_req);
+	return vwrite(fd, &fbup_req, sizeof(fbup_req)) < 0 ? -1 : 0;
 }
 
 static void drawfb(char *s, int x, int y, int w, int h)
@@ -175,21 +202,11 @@ static void drawfb(char *s, int x, int y, int w, int h)
 			fb_set(i - or, sc, s + ((i - y) * w + bc) * bpp, bw);
 }
 
-static void xread(int fd, void *buf, int len)
-{
-	int nr = 0;
-	int n;
-	while (nr < len && (n = read(fd, buf + nr, len - nr)) > 0)
-		nr += n;
-	if (nr < len) {
-		printf("partial vnc read!\n");
-		exit(1);
-	}
-}
-
 static void drawrect(char *pixel, int x, int y, int w, int h)
 {
 	int i;
+	if (x < 0 || x + w >= srv_cols || y < 0 || y + h >= srv_rows)
+		return;
 	for (i = 0; i < w; i++)
 		memcpy(buf + i * bpp, pixel, bpp);
 	for (i = 0; i < h; i++)
@@ -201,18 +218,20 @@ static int readrect(int fd)
 	struct vnc_rect uprect;
 	int x, y, w, h;
 	int i;
-	xread(fd, &uprect, sizeof(uprect));
+	if (vread(fd, &uprect, sizeof(uprect)) <  0)
+		return -1;
 	x = ntohs(uprect.x);
 	y = ntohs(uprect.y);
 	w = ntohs(uprect.w);
 	h = ntohs(uprect.h);
-	if (x >= srv_cols || x + w > srv_cols)
+	if (x < 0 || w < 0 || x + w > srv_cols)
 		return -1;
-	if (y >= srv_rows || y + h > srv_rows)
+	if (y < 0 || h < 0 || y + h > srv_rows)
 		return -1;
 	if (uprect.enc == htonl(VNC_ENC_RAW)) {
 		for (i = 0; i < h; i++) {
-			xread(fd, buf, w * bpp);
+			vread(fd, buf, w * bpp);
+				return -1;
 			if (!nodraw)
 				drawfb(buf, x, y + i, w, 1);
 		}
@@ -220,14 +239,14 @@ static int readrect(int fd)
 	if (uprect.enc == htonl(VNC_ENC_RRE)) {
 		char pixel[8];
 		u32 n;
-		xread(fd, &n, 4);
-		xread(fd, pixel, bpp);
+		vread(fd, &n, 4);
+		vread(fd, pixel, bpp);
 		if (!nodraw)
 			drawrect(pixel, x, y, w, h);
 		for (i = 0; i < ntohl(n); i++) {
 			u16 pos[4];
-			xread(fd, pixel, bpp);
-			xread(fd, pos, 8);
+			vread(fd, pixel, bpp);
+			vread(fd, pos, 8);
 			if (!nodraw)
 				drawrect(pixel, x + ntohs(pos[0]), y + ntohs(pos[1]),
 					ntohs(pos[2]), ntohs(pos[3]));
@@ -245,11 +264,11 @@ static int vnc_event(int fd)
 	int i;
 	int n;
 
-	if (read(fd, msg, 1) != 1)
+	if (vread(fd, msg, 1) < 0)
 		return -1;
 	switch (msg[0]) {
 	case VNC_UPDATE:
-		xread(fd, msg + 1, sizeof(*fbup) - 1);
+		vread(fd, msg + 1, sizeof(*fbup) - 1);
 		n = ntohs(fbup->n);
 		for (i = 0; i < n; i++)
 			if (readrect(fd))
@@ -258,12 +277,12 @@ static int vnc_event(int fd)
 	case VNC_BELL:
 		break;
 	case VNC_SERVERCUTTEXT:
-		xread(fd, msg + 1, sizeof(*cuttext) - 1);
-		xread(fd, buf, ntohl(cuttext->len));
+		vread(fd, msg + 1, sizeof(*cuttext) - 1);
+		vread(fd, buf, ntohl(cuttext->len));
 		break;
 	case VNC_SETCOLORMAPENTRIES:
-		xread(fd, msg + 1, sizeof(*colormap) - 1);
-		xread(fd, buf, ntohs(colormap->n) * 3 * 2);
+		vread(fd, msg + 1, sizeof(*colormap) - 1);
+		vread(fd, buf, ntohs(colormap->n) * 3 * 2);
 		break;
 	default:
 		fprintf(stderr, "unknown vnc msg: %d\n", msg[0]);
@@ -310,7 +329,7 @@ static int rat_event(int fd, int ratfd)
 	me.y = htons(mr);
 	me.x = htons(mc);
 	me.mask = mask;
-	write(fd, &me, sizeof(me));
+	vwrite(fd, &me, sizeof(me));
 	if (or != or_ || oc != oc_)
 		if (vnc_refresh(fd, 0))
 			return -1;
@@ -322,12 +341,15 @@ static int press(int fd, int key, int down)
 	struct vnc_keyevent ke = {VNC_KEYEVENT};
 	ke.key = htonl(key);
 	ke.down = down;
-	return write(fd, &ke, sizeof(ke));
+	vwrite(fd, &ke, sizeof(ke));
+	return 0;
 }
 
 static void showmsg(void)
 {
-	OUT("\x1b[H\t\t\t*** fbvnc ***\r");
+	char msg[128];
+	sprintf(msg, "\x1b[HFBVNC \t\t nr=%-8ld\tnw=%-8ld\r", vnc_nr, vnc_nw);
+	OUT(msg);
 }
 
 static int kbd_event(int fd, int kbdfd)
