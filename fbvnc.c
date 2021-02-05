@@ -230,7 +230,7 @@ static int readrect(int fd)
 		return -1;
 	if (uprect.enc == htonl(VNC_ENC_RAW)) {
 		for (i = 0; i < h; i++) {
-			vread(fd, buf, w * bpp);
+			if (vread(fd, buf, w * bpp) < 0)
 				return -1;
 			if (!nodraw)
 				drawfb(buf, x, y + i, w, 1);
@@ -285,7 +285,7 @@ static int vnc_event(int fd)
 		vread(fd, buf, ntohs(colormap->n) * 3 * 2);
 		break;
 	default:
-		fprintf(stderr, "unknown vnc msg: %d\n", msg[0]);
+		fprintf(stderr, "fbvnc: unknown vnc msg %d\n", msg[0]);
 		return -1;
 	}
 	return 0;
@@ -496,12 +496,12 @@ int main(int argc, char * argv[])
 	if (argc >= 3)
 		port = argv[2];
 	if ((vnc_fd = vnc_connect(host, port)) < 0) {
-		fprintf(stderr, "could not connect!\n");
+		fprintf(stderr, "fbvnc: could not connect!\n");
 		return 1;
 	}
 	if (vnc_init(vnc_fd) < 0) {
 		close(vnc_fd);
-		fprintf(stderr, "vnc init failed!\n");
+		fprintf(stderr, "fbvnc: vnc init failed!\n");
 		return 1;
 	}
 	term_setup(&ti);
