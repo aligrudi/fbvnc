@@ -491,7 +491,7 @@ int main(int argc, char * argv[])
 	char *host = "127.0.0.1";
 	struct termios ti;
 	int vnc_fd, rat_fd;
-	if (argc >= 2)
+	if (argc >= 2 && argv[1][0] && strcmp("-", argv[1]))
 		host = argv[1];
 	if (argc >= 3)
 		port = argv[2];
