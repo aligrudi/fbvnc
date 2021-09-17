@@ -1,0 +1,21 @@
+FBVNC
+=====
+
+Fbvnc is a small VNC client for Linux framebuffer.  It can be invoked
+as follows.
+
+  $ fbvnc host port
+
+Without arguments, it connects to port 5900 of 127.0.0.1.  Once
+connected, it sends keyboard and mouse inputs to the VNC server and
+updates the screen when necessary.  The following keys are not sent to
+the server.
+
+==============	===================================
+KEY		ACTION
+==============	===================================
+ctrl-space	Stop/continue updating the screen
+ctrl-alt-c	Exit fbvnc
+==============	===================================
+
+The zlib branch supports zlib compression.
