@@ -80,7 +80,7 @@ static int vnc_connect(char *addr, char *port)
 
 static void fbmode_bits(int *rr, int *rg, int *rb)
 {
-	int mode = FBM_COLORS(fb_mode());
+	int mode = FBM_CLR(fb_mode());
 	*rr = (mode >> 8) & 0xf;
 	*rg = (mode >> 4) & 0xf;
 	*rb = (mode >> 0) & 0xf;
@@ -137,7 +137,7 @@ static int vnc_init(int fd)
 	srv_rows = ntohs(serverinit.h);
 
 	/* set up the framebuffer */
-	if (fb_init())
+	if (fb_init(getenv("FBDEV")))
 		return -1;
 	cols = MIN(srv_cols, fb_cols());
 	rows = MIN(srv_rows, fb_rows());
@@ -187,6 +187,11 @@ static int vnc_refresh(int fd, int inc)
 	fbup_req.w = htons(cols);
 	fbup_req.h = htons(rows);
 	return vwrite(fd, &fbup_req, sizeof(fbup_req)) < 0 ? -1 : 0;
+}
+
+static void fb_set(int r, int c, void *mem, int len)
+{
+	memcpy(fb_mem(r) + c * bpp, mem, len * bpp);
 }
 
 static void drawfb(char *s, int x, int y, int w, int h)
