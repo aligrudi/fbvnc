@@ -28,6 +28,7 @@
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -48,7 +49,8 @@ static int bpp;			/* bytes per pixel */
 static int srv_cols, srv_rows;	/* server screen dimensions */
 static int or, oc;		/* visible screen offset */
 static int mr, mc;		/* mouse position */
-static int nodraw;		/* don't draw anything */
+static int nodraw;		/* do not draw anything */
+static int nodraw_ref;		/* pending screen redraw */
 static long vnc_nr;		/* number of bytes received */
 static long vnc_nw;		/* number of bytes sent */
 
@@ -357,6 +359,15 @@ static void showmsg(void)
 	OUT(msg);
 }
 
+static void nodraw_set(int val)
+{
+	if (val && !nodraw)
+		showmsg();
+	if (!val && nodraw)
+		nodraw_ref = 1;
+	nodraw = val;
+}
+
 static int kbd_event(int fd, int kbdfd)
 {
 	char key[1024];
@@ -405,14 +416,7 @@ static int kbd_event(int fd, int kbdfd)
 			k = 0xff0d;
 			break;
 		case 0x0:	/* c-space: stop/start drawing */
-			if (!nodraw) {
-				nodraw = 1;
-				showmsg();
-			} else {
-				nodraw = 0;
-				if (vnc_refresh(fd, 0))
-					return -1;
-			}
+			nodraw_set(1 - nodraw);
 		default:
 			k = (unsigned char) key[i];
 		}
@@ -484,10 +488,23 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 		if (ufds[2].revents & POLLIN)
 			if (rat_event(vnc_fd, rat_fd) == -1)
 				break;
+		if (!nodraw && nodraw_ref) {
+			nodraw_ref = 0;
+			if (vnc_refresh(vnc_fd, 0))
+				break;
+		}
 		if (!pending++)
 			if (vnc_refresh(vnc_fd, 1))
 				break;
 	}
+}
+
+static void signalreceived(int sig)
+{
+	if (sig == SIGUSR1 && !nodraw)		/* disable drawing */
+		nodraw_set(1);
+	if (sig == SIGUSR2 && nodraw)		/* enable drawing */
+		nodraw_set(0);
 }
 
 int main(int argc, char * argv[])
@@ -515,6 +532,8 @@ int main(int argc, char * argv[])
 	rat_fd = open("/dev/input/mice", O_RDWR);
 	write(rat_fd, "\xf3\xc8\xf3\x64\xf3\x50", 6);
 	read(rat_fd, buf, 1);
+	signal(SIGUSR1, signalreceived);
+	signal(SIGUSR2, signalreceived);
 
 	mainloop(vnc_fd, 0, rat_fd);
 
