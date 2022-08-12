@@ -526,6 +526,9 @@ int main(int argc, char * argv[])
 		fprintf(stderr, "fbvnc: vnc init failed!\n");
 		return 1;
 	}
+	if (getenv("TERM_PGID") != NULL && atoi(getenv("TERM_PGID")) == getppid())
+		if (tcsetpgrp(0, getppid()) == 0)
+			setpgid(0, getppid());
 	term_setup(&ti);
 
 	/* entering intellimouse for using mouse wheel */

@@ -26,8 +26,5 @@ when switching back to the tag, its old contents are shown.  Also, it
 is possible to disable drawing when switching from the terminal in
 which fbvnc is run, and to enable it when switching back (instead of
 using ctrl-space manually each time).  To do so, execute the shell in
-fbpad using m-; (not the usual m-c), and then execute fbvnc as follows
-(note that the exec is necessary, so that relevant signals are sent to
-the fbvnc process):
-
-  exec fbvnc host port
+fbpad using m-; (not the usual m-c), to enable terminal switching
+signals.
