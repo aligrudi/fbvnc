@@ -1,7 +1,7 @@
 /*
  * FBVNC: a small Linux framebuffer VNC viewer
  *
- * Copyright (C) 2009-2021 Ali Gholami Rudi
+ * Copyright (C) 2009-2024 Ali Gholami Rudi
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -39,11 +39,12 @@
 
 #define MIN(a, b)	((a) < (b) ? (a) : (b))
 #define MAX(a, b)	((a) > (b) ? (a) : (b))
-#define OUT(msg)	write(1, (msg), strlen(msg))
+#define LEN(a)		(sizeof(a) / sizeof((a)[0]))
 
 #define VNC_PORT	"5900"
 #define SCRSCRL		2
-#define MAXRES		(1 << 16)
+
+#define RFB(x, y)	(rfb + ((y) * srv_cols + (x)) * bpp)
 
 static int cols, rows;		/* framebuffer dimensions */
 static int bpp;			/* bytes per pixel */
@@ -54,10 +55,9 @@ static int nodraw;		/* do not draw anything */
 static int nodraw_ref;		/* pending screen redraw */
 static long vnc_nr;		/* number of bytes received */
 static long vnc_nw;		/* number of bytes sent */
+static char *rfb;		/* remote framebuffer contents */
 
-static char buf[MAXRES];
-
-static z_stream zstr;
+static z_stream z_str;
 static char *z_out;
 static int z_outlen;
 static int z_outsize;
@@ -71,7 +71,7 @@ static int vread(int fd, void *buf, long len)
 		nr += n;
 	vnc_nr += nr;
 	if (nr < len)
-		printf("fbvnc: partial vnc read!\n");
+		fprintf(stderr, "fbvnc: partial vnc read!\n");
 	return nr < len ? -1 : len;
 }
 
@@ -79,38 +79,35 @@ static int vwrite(int fd, void *buf, long len)
 {
 	int nw = write(fd, buf, len);
 	if (nw != len)
-		printf("fbvnc: partial vnc write!\n");
+		fprintf(stderr, "fbvnc: partial vnc write!\n");
 	vnc_nw += len;
 	return nw < len ? -1 : nw;
 }
 
 static int z_init(void)
 {
-	zstr.zalloc = Z_NULL;
-	zstr.zfree = Z_NULL;
-	zstr.opaque = Z_NULL;
-	zstr.avail_in = 0;
-	zstr.next_in = Z_NULL;
-	if (inflateInit(&zstr) != Z_OK) {
-		fprintf(stderr, "fbvnc: failed to initialize a zlib stream\n");
-		return 1;
-	}
-	return 0;
+	z_str.zalloc = Z_NULL;
+	z_str.zfree = Z_NULL;
+	z_str.opaque = Z_NULL;
+	z_str.avail_in = 0;
+	z_str.next_in = Z_NULL;
+	return inflateInit(&z_str) != Z_OK;
 }
 
 static int z_push(void *src, int len)
 {
+	char buf[512];
 	z_outlen = 0;
 	z_outpos = 0;
-	zstr.next_in = src;
-	zstr.avail_in = len;
-	while (zstr.avail_in > 0) {
+	z_str.next_in = src;
+	z_str.avail_in = len;
+	while (z_str.avail_in > 0) {
 		int nr;
-		zstr.avail_out = sizeof(buf);
-		zstr.next_out = (void *) buf;
-		if (inflate(&zstr, Z_NO_FLUSH) != Z_OK)
+		z_str.avail_out = sizeof(buf);
+		z_str.next_out = (void *) buf;
+		if (inflate(&z_str, Z_NO_FLUSH) != Z_OK)
 			return 1;
-		nr = sizeof(buf) - zstr.avail_out;
+		nr = sizeof(buf) - z_str.avail_out;
 		if (z_outlen + nr > z_outsize) {
 			char *old = z_out;
 			while (z_outlen + nr > z_outsize)
@@ -135,9 +132,16 @@ static int z_read(void *dst, int len)
 	return 0;
 }
 
+static int z_char(void)
+{
+	u8 c = 0;
+	z_read(&c, 1);
+	return c;
+}
+
 static int z_free(void)
 {
-	inflateEnd(&zstr);
+	inflateEnd(&z_str);
 	free(z_out);
 	return 0;
 }
@@ -176,13 +180,14 @@ static void fbmode_bits(int *rr, int *rg, int *rb)
 
 static int vnc_init(int fd)
 {
+	char buf[256];
 	char vncver[16];
 	int rr, rg, rb;
 	struct vnc_clientinit clientinit;
 	struct vnc_serverinit serverinit;
 	struct vnc_setpixelformat pixfmt_cmd;
 	struct vnc_setencoding enc_cmd;
-	u32 enc[] = {htonl(VNC_ENC_ZLIB), htonl(VNC_ENC_RRE), htonl(VNC_ENC_RAW)};
+	u32 enc[] = {htonl(VNC_ENC_ZRLE), htonl(VNC_ENC_ZLIB), htonl(VNC_ENC_RRE), htonl(VNC_ENC_RAW)};
 	int connstat = VNC_CONN_FAILED;
 
 	/* handshake */
@@ -203,9 +208,6 @@ static int vnc_init(int fd)
 	srv_cols = ntohs(serverinit.w);
 	srv_rows = ntohs(serverinit.h);
 
-	/* set up the framebuffer */
-	if (fb_init(getenv("FBDEV")))
-		return -1;
 	cols = MIN(srv_cols, fb_cols());
 	rows = MIN(srv_rows, fb_rows());
 	bpp = FBM_BPP(fb_mode());
@@ -232,19 +234,9 @@ static int vnc_init(int fd)
 	/* send pixel format */
 	enc_cmd.type = VNC_SETENCODING;
 	enc_cmd.pad = 0;
-	enc_cmd.n = htons(3);
+	enc_cmd.n = htons(LEN(enc));
 	vwrite(fd, &enc_cmd, sizeof(enc_cmd));
 	vwrite(fd, enc, ntohs(enc_cmd.n) * sizeof(enc[0]));
-
-	/* initialize zlib */
-	z_init();
-	return 0;
-}
-
-static int vnc_free(void)
-{
-	z_free();
-	fb_free();
 	return 0;
 }
 
@@ -253,10 +245,10 @@ static int vnc_refresh(int fd, int inc)
 	struct vnc_updaterequest fbup_req;
 	fbup_req.type = VNC_UPDATEREQUEST;
 	fbup_req.inc = inc;
-	fbup_req.x = htons(oc);
-	fbup_req.y = htons(or);
-	fbup_req.w = htons(cols);
-	fbup_req.h = htons(rows);
+	fbup_req.x = htons(0);
+	fbup_req.y = htons(0);
+	fbup_req.w = htons(srv_cols);
+	fbup_req.h = htons(srv_rows);
 	return vwrite(fd, &fbup_req, sizeof(fbup_req)) < 0 ? -1 : 0;
 }
 
@@ -265,28 +257,116 @@ static void fb_set(int r, int c, void *mem, int len)
 	memcpy(fb_mem(r) + c * bpp, mem, len * bpp);
 }
 
-static void drawfb(char *s, int x, int y, int w, int h)
+static void drawfb(int c, int r, int w, int h)
 {
-	int sc;		/* screen column offset */
-	int bc, bw;	/* buffer column offset / row width */
+	int bc = MAX(c, oc);
+	int br = MAX(r, or);
+	int ec = MIN(c + w, MIN(srv_cols, oc + cols));
+	int er = MIN(r + h, MIN(srv_rows, or + rows));
 	int i;
-	sc = MAX(0, x - oc);
-	bc = x > oc ? 0 : oc - x;
-	bw = x + w < oc + cols ? w - bc : w - bc - (x + w - oc - cols);
-	for (i = y; i < y + h; i++)
-		if (i - or >= 0 && i - or < rows && bw > 0)
-			fb_set(i - or, sc, s + ((i - y) * w + bc) * bpp, bw);
+	if (bc < ec) {
+		for (i = br; i < er; i++)
+			fb_set(i - or, bc - oc, RFB(bc, i), ec - bc);
+	}
 }
 
-static void drawrect(char *pixel, int x, int y, int w, int h)
+static void fillrect(char *pixel, int x, int y, int w, int h)
 {
 	int i;
-	if (x < 0 || x + w >= srv_cols || y < 0 || y + h >= srv_rows)
+	if (x < 0 || x + w > srv_cols || y < 0 || y + h > srv_rows)
 		return;
 	for (i = 0; i < w; i++)
-		memcpy(buf + i * bpp, pixel, bpp);
-	for (i = 0; i < h; i++)
-		drawfb(buf, x, y + i, w, 1);
+		memcpy(RFB(x + i, y), pixel, bpp);
+	for (i = 1; i < h; i++)
+		memcpy(RFB(x, y + i), RFB(x, y), w * bpp);
+}
+
+static int readzrle(int x, int y, int w, int h)
+{
+	char pixel[8] = {0};
+	int i, j, k, b;
+	int cpp = bpp == 4 ? 3 : bpp;
+	u8 subenc = 0;
+	for (i = 0; i < h; i += 64) {
+		for (j = 0; j < w; j += 64) {
+			int tw = MIN(w - j, 64);
+			int th = MIN(h - i, 64);
+			z_read(&subenc, 1);
+			if (subenc == 0) {
+				for (k = 0; k < th; k++)
+					for (b = 0; b < tw; b++)
+						z_read(RFB(x + j + b, y + i + k), cpp);
+			}
+			if (subenc == 1) {
+				z_read(pixel, cpp);
+				fillrect(pixel, x + j, y + i, tw, th);
+			}
+			if (subenc >= 2 && subenc <= 16) {
+				char palette[16 * 4];
+				char row[32];
+				int bits = 1;
+				int wid, mask;
+				z_read(palette, subenc * cpp);
+				if (subenc >= 3)
+					bits = 2;
+				if (subenc >= 5)
+					bits = 4;
+				wid = (bits * tw + 7) / 8;
+				mask = (1 << bits) - 1;
+				for (k = 0; k < th; k++) {
+					z_read(row, wid);
+					for (b = 0; b < tw; b++) {
+						int idx = (b * bits) / 8;
+						int off = 8 - (b * bits) % 8 - bits;
+						int val = (((unsigned char) row[idx]) >> off) & mask;
+						memcpy(RFB(x + j + b, y + i + k),
+							palette + val * cpp, cpp);
+					}
+				}
+			}
+			if (subenc == 128) {
+				k = 0;
+				while (k < th * tw) {
+					int rlen = 1;
+					int c;
+					z_read(pixel, cpp);
+					while ((c = z_char()) == 255)
+						rlen += c;
+					rlen += c;
+					while (--rlen >= 0 && k < th * tw) {
+						memcpy(RFB(x + j + (k % tw), y + i + (k / tw)), pixel, cpp);
+						k++;
+					}
+				}
+			}
+			if (subenc >= 130 && subenc <= 255) {
+				char palette[128 * 4];
+				int cnt = subenc - 128;
+				z_read(palette, cnt * cpp);
+				k = 0;
+				while (k < th * tw) {
+					u8 run = z_char();
+					if (run & 0x80) {
+						int rlen = 1;
+						int c;
+						while ((c = z_char()) == 255)
+							rlen += c;
+						rlen += c;
+						while (--rlen >= 0 && k < th * tw) {
+							memcpy(RFB(x + j + (k % tw), y + i + (k / tw)),
+								palette + (run - 128) * cpp, cpp);
+							k++;
+						}
+					} else {
+						memcpy(RFB(x + j + (k % tw), y + i + (k / tw)),
+							palette + run * cpp, cpp);
+						k++;
+					}
+				}
+			}
+		}
+	}
+	return 0;
 }
 
 static int readrect(int fd)
@@ -306,10 +386,8 @@ static int readrect(int fd)
 		return -1;
 	if (uprect.enc == htonl(VNC_ENC_RAW)) {
 		for (i = 0; i < h; i++) {
-			if (vread(fd, buf, w * bpp) < 0)
+			if (vread(fd, RFB(x, y + i), w * bpp) < 0)
 				return -1;
-			if (!nodraw)
-				drawfb(buf, x, y + i, w, 1);
 		}
 	}
 	if (uprect.enc == htonl(VNC_ENC_RRE)) {
@@ -317,15 +395,13 @@ static int readrect(int fd)
 		u32 n;
 		vread(fd, &n, 4);
 		vread(fd, pixel, bpp);
-		if (!nodraw)
-			drawrect(pixel, x, y, w, h);
+		fillrect(pixel, x, y, w, h);
 		for (i = 0; i < ntohl(n); i++) {
 			u16 pos[4];
 			vread(fd, pixel, bpp);
 			vread(fd, pos, 8);
-			if (!nodraw)
-				drawrect(pixel, x + ntohs(pos[0]), y + ntohs(pos[1]),
-					ntohs(pos[2]), ntohs(pos[3]));
+			fillrect(pixel, x + ntohs(pos[0]), y + ntohs(pos[1]),
+				ntohs(pos[2]), ntohs(pos[3]));
 		}
 	}
 	if (uprect.enc == htonl(VNC_ENC_ZLIB)) {
@@ -336,12 +412,22 @@ static int readrect(int fd)
 		vread(fd, zdat, ntohl(zlen));
 		z_push(zdat, ntohl(zlen));
 		free(zdat);
-		for (i = 0; i < h; i++) {
-			z_read(buf, w * bpp);
-			if (!nodraw)
-				drawfb(buf, x, y + i, w, 1);
-		}
+		for (i = 0; i < h; i++)
+			z_read(RFB(x, y + i), w * bpp);
 	}
+	if (uprect.enc == htonl(VNC_ENC_ZRLE)) {
+		int zlen;
+		char *zdat;
+		vread(fd, &zlen, 4);
+		zdat = malloc(ntohl(zlen));
+		vread(fd, zdat, ntohl(zlen));
+		z_push(zdat, ntohl(zlen));
+		free(zdat);
+		if (readzrle(x, y, w, h))
+			return -1;
+	}
+	if (!nodraw)
+		drawfb(x, y, w, h);
 	return 0;
 }
 
@@ -368,11 +454,11 @@ static int vnc_event(int fd)
 		break;
 	case VNC_SERVERCUTTEXT:
 		vread(fd, msg + 1, sizeof(*cuttext) - 1);
-		vread(fd, buf, ntohl(cuttext->len));
+		vread(fd, msg, ntohl(cuttext->len));
 		break;
 	case VNC_SETCOLORMAPENTRIES:
 		vread(fd, msg + 1, sizeof(*colormap) - 1);
-		vread(fd, buf, ntohs(colormap->n) * 3 * 2);
+		vread(fd, msg, ntohs(colormap->n) * 3 * 2);
 		break;
 	default:
 		fprintf(stderr, "fbvnc: unknown vnc msg %d\n", msg[0]);
@@ -421,8 +507,7 @@ static int rat_event(int fd, int ratfd)
 	me.mask = mask;
 	vwrite(fd, &me, sizeof(me));
 	if (or != or_ || oc != oc_)
-		if (vnc_refresh(fd, 0))
-			return -1;
+		nodraw_ref = 1;
 	return 0;
 }
 
@@ -437,9 +522,8 @@ static int press(int fd, int key, int down)
 
 static void showmsg(void)
 {
-	char msg[128];
-	sprintf(msg, "\x1b[HFBVNC \t\t nr=%-8ld\tnw=%-8ld\r", vnc_nr, vnc_nw);
-	OUT(msg);
+	printf("\x1b[HFBVNC \t\t nr=%-8ld\tnw=%-8ld\r", vnc_nr, vnc_nw);
+	fflush(stdout);
 }
 
 static void nodraw_set(int val)
@@ -525,8 +609,9 @@ static int kbd_event(int fd, int kbdfd)
 static void term_setup(struct termios *ti)
 {
 	struct termios termios;
-	OUT("\033[2J");		/* clear the screen */
-	OUT("\033[?25l");	/* hide the cursor */
+	printf("\033[2J");		/* clear the screen */
+	printf("\033[?25l");		/* hide the cursor */
+	fflush(stdout);
 	showmsg();
 	tcgetattr(0, &termios);
 	*ti = termios;
@@ -537,7 +622,8 @@ static void term_setup(struct termios *ti)
 static void term_cleanup(struct termios *ti)
 {
 	tcsetattr(0, TCSANOW, ti);
-	OUT("\r\n\033[?25h");	/* show the cursor */
+	printf("\r\n\033[?25h");	/* show the cursor */
+	fflush(stdout);
 }
 
 static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
@@ -573,8 +659,7 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 				break;
 		if (!nodraw && nodraw_ref) {
 			nodraw_ref = 0;
-			if (vnc_refresh(vnc_fd, 0))
-				break;
+			drawfb(oc, or, cols, rows);
 		}
 		if (!pending++)
 			if (vnc_refresh(vnc_fd, 1))
@@ -592,6 +677,7 @@ static void signalreceived(int sig)
 
 int main(int argc, char * argv[])
 {
+	char buf[256];
 	char *port = VNC_PORT;
 	char *host = "127.0.0.1";
 	struct termios ti;
@@ -604,14 +690,27 @@ int main(int argc, char * argv[])
 		fprintf(stderr, "fbvnc: could not connect!\n");
 		return 1;
 	}
-	if (vnc_init(vnc_fd) < 0) {
-		close(vnc_fd);
+	/* set up the framebuffer */
+	if (fb_init(getenv("FBDEV"))) {
 		fprintf(stderr, "fbvnc: vnc init failed!\n");
 		return 1;
 	}
-	if (getenv("TERM_PGID") != NULL && atoi(getenv("TERM_PGID")) == getppid())
+	if (vnc_init(vnc_fd) < 0) {
+		fprintf(stderr, "fbvnc: vnc init failed!\n");
+		return 1;
+	}
+	if (z_init() != 0) {
+		fprintf(stderr, "fbvnc: failed to initialise a zlib stream\n");
+		return 1;
+	}
+	if ((rfb = malloc(srv_rows * srv_cols * bpp)) == NULL) {
+		fprintf(stderr, "fbvnc: failed to allocate rfb\n");
+		return 1;
+	}
+	if (getenv("TERM_PGID") != NULL && atoi(getenv("TERM_PGID")) == getppid()) {
 		if (tcsetpgrp(0, getppid()) == 0)
 			setpgid(0, getppid());
+	}
 	term_setup(&ti);
 
 	/* entering intellimouse for using mouse wheel */
@@ -624,7 +723,9 @@ int main(int argc, char * argv[])
 	mainloop(vnc_fd, 0, rat_fd);
 
 	term_cleanup(&ti);
-	vnc_free();
+	z_free();
+	fb_free();
+	free(rfb);
 	close(vnc_fd);
 	close(rat_fd);
 	return 0;
