@@ -2,10 +2,12 @@ CC = cc
 CFLAGS = -Wall -O2
 LDFLAGS =
 
+OBJS = fbvnc.o draw.o
+
 all: fbvnc
 .c.o:
 	$(CC) -c $(CFLAGS) $<
-fbvnc: fbvnc.o draw.o
-	$(CC) $(LDFLAGS) -o $@ $^
+fbvnc: $(OBJS)
+	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 clean:
 	rm -f *.o fbvnc
