@@ -178,7 +178,7 @@ static void fbmode_bits(int *rr, int *rg, int *rb)
 	*rb = (mode >> 0) & 0xf;
 }
 
-static int vnc_init(int fd)
+static int vnc_init(int fd, int enc)
 {
 	char buf[256];
 	char vncver[16];
@@ -187,7 +187,7 @@ static int vnc_init(int fd)
 	struct vnc_serverinit serverinit;
 	struct vnc_setpixelformat pixfmt_cmd;
 	struct vnc_setencoding enc_cmd;
-	u32 enc[] = {htonl(VNC_ENC_ZRLE), htonl(VNC_ENC_ZLIB), htonl(VNC_ENC_RRE), htonl(VNC_ENC_RAW)};
+	u32 encs[] = {htonl(VNC_ENC_ZRLE), htonl(VNC_ENC_ZLIB), htonl(VNC_ENC_RRE), htonl(VNC_ENC_RAW)};
 	int connstat = VNC_CONN_FAILED;
 
 	/* handshake */
@@ -234,9 +234,11 @@ static int vnc_init(int fd)
 	/* send pixel format */
 	enc_cmd.type = VNC_SETENCODING;
 	enc_cmd.pad = 0;
-	enc_cmd.n = htons(LEN(enc));
+	if (enc >= 0)
+		encs[0] = htonl(enc);
+	enc_cmd.n = htons(LEN(encs));
 	vwrite(fd, &enc_cmd, sizeof(enc_cmd));
-	vwrite(fd, enc, ntohs(enc_cmd.n) * sizeof(enc[0]));
+	vwrite(fd, encs, ntohs(enc_cmd.n) * sizeof(encs[0]));
 	return 0;
 }
 
@@ -682,10 +684,25 @@ int main(int argc, char * argv[])
 	char *host = "127.0.0.1";
 	struct termios ti;
 	int vnc_fd, rat_fd;
-	if (argc >= 2 && argv[1][0] && strcmp("-", argv[1]))
-		host = argv[1];
-	if (argc >= 3)
-		port = argv[2];
+	int enc = -1;
+	int i;
+	for (i = 1; argv[i] && argv[i][0] == '-' && argv[i][1]; i++) {
+		switch (argv[i][1]) {
+		case 'e':
+			enc = atoi(argv[i][2] ? argv[i] + 2 : argv[++i]);
+			break;
+		}
+		if (argv[i][1] == 'h') {
+			printf("Usage: %s [options] [host] [port]\n\n", argv[0]);
+			printf("Options:\n");
+			printf("  -e enc  RFB encoding (0: raw, 2: rre, 6: zlib, 16: zrle)\n");
+			return 0;
+		}
+	}
+	if (argv[i] && strcmp("-", argv[i]))
+		host = argv[i];
+	if (argv[i] && argv[i + 1])
+		port = argv[i + 1];
 	if ((vnc_fd = vnc_connect(host, port)) < 0) {
 		fprintf(stderr, "fbvnc: could not connect!\n");
 		return 1;
@@ -695,7 +712,7 @@ int main(int argc, char * argv[])
 		fprintf(stderr, "fbvnc: vnc init failed!\n");
 		return 1;
 	}
-	if (vnc_init(vnc_fd) < 0) {
+	if (vnc_init(vnc_fd, enc) < 0) {
 		fprintf(stderr, "fbvnc: vnc init failed!\n");
 		return 1;
 	}
