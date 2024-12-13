@@ -18,8 +18,6 @@ ctrl-space	Stop/continue updating the screen
 ctrl-alt-c	Exit fbvnc
 ==============	===================================
 
-The zlib branch supports zlib compression.
-
 When using fbvnc with fbpad, it is usually a good idea to list the tag
 in which fbvnc is run in TAGS_SAVED (the scrsnap feature), so that
 when switching back to the tag, its old contents are shown.  Also, it
