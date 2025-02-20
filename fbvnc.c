@@ -769,8 +769,8 @@ int main(int argc, char * argv[])
 		default:
 			printf("Usage: %s [options] [host] [port]\n\n", argv[0]);
 			printf("Options:\n");
+			printf("  -c path   cut text file\n");
 			printf("  -e enc    RFB encoding (0: raw, 2: rre, 6: zlib, 16: zrle)\n");
-			printf("  -c path   copy text file\n");
 			return 0;
 		}
 	}

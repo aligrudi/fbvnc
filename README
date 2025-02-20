@@ -10,13 +10,19 @@ when necessary.  The following keys are not sent to the server.
 ==============	===================================
 KEY		ACTION
 ==============	===================================
-ctrl-space	Send copy text buffer to the server
+ctrl-space	Send text buffer to the server
 ctrl-alt-c	Exit fbvnc
 ==============	===================================
 
 Fbvnc stops updating the screen when it receives the SIGUSR1 signal.
 If it receives SIGUSR2 after that, it continues updating the screen as
 usual.
+
+To copy text between the server and the client, it is necessary to
+specify the address of a file with the -c option.  When the VNC server
+sends a cut text message (probably when some text is selected), the
+text is written to this file.  Also, when ctrl-space is pressed, the
+contents of this file is sent to the server via a cut text message.
 
 When using fbvnc with fbpad, it is usually a good idea to list the tag
 in which fbvnc is run in TAGS_SAVED (the scrsnap feature), so that
