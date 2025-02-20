@@ -80,7 +80,7 @@ struct vnc_update {
 	/* struct vnc_rect rects[n]; */
 };
 
-struct vnc_servercuttext {
+struct vnc_cuttext {
 	u8 type;
 	u8 pad1;
 	u16 pad2;

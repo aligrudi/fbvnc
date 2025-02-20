@@ -1,7 +1,7 @@
 /*
  * FBVNC: a small Linux framebuffer VNC viewer
  *
- * Copyright (C) 2009-2024 Ali Gholami Rudi
+ * Copyright (C) 2009-2025 Ali Gholami Rudi
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -56,6 +56,7 @@ static int nodraw_ref;		/* pending screen redraw */
 static long vnc_nr;		/* number of bytes received */
 static long vnc_nw;		/* number of bytes sent */
 static char *rfb;		/* remote framebuffer contents */
+static char *cut_file;		/* clipboard path */
 
 static z_stream z_str;
 static char *z_out;
@@ -77,7 +78,10 @@ static int vread(int fd, void *buf, long len)
 
 static int vwrite(int fd, void *buf, long len)
 {
-	int nw = write(fd, buf, len);
+	long nw = 0;
+	long n;
+	while (nw < len && (n = write(fd, buf, len)) > 0)
+		nw += n;
 	if (nw != len)
 		fprintf(stderr, "fbvnc: partial vnc write!\n");
 	vnc_nw += len;
@@ -433,11 +437,39 @@ static int readrect(int fd)
 	return 0;
 }
 
+static int cut_copy(char *buf, int len)
+{
+	int fd = cut_file != NULL ? open(cut_file, O_WRONLY | O_TRUNC | O_CREAT, 0x600) : -1;
+	if (fd >= 0) {
+		write(fd, buf, len);
+		close(fd);
+		return 0;
+	}
+	return 1;
+}
+
+static int cut_send(int fd)
+{
+	char buf[4096];
+	int cfd = cut_file != NULL ? open(cut_file, O_RDONLY) : -1;
+	if (cfd >= 0) {
+		struct vnc_cuttext ct = {VNC_CLIENTCUTTEXT};
+		int len = read(cfd, buf, sizeof(buf));
+		close(cfd);
+		ct.len = htonl(len);
+		vwrite(fd, &ct, sizeof(ct));
+		vwrite(fd, buf, len);
+		return 0;
+	}
+	return 1;
+}
+
 static int vnc_event(int fd)
 {
 	char msg[1 << 12];
+	char *buf;
 	struct vnc_update *fbup = (void *) msg;
-	struct vnc_servercuttext *cuttext = (void *) msg;
+	struct vnc_cuttext *cuttext = (void *) msg;
 	struct vnc_setcolormapentries *colormap = (void *) msg;
 	int i;
 	int n;
@@ -456,11 +488,22 @@ static int vnc_event(int fd)
 		break;
 	case VNC_SERVERCUTTEXT:
 		vread(fd, msg + 1, sizeof(*cuttext) - 1);
-		vread(fd, msg, ntohl(cuttext->len));
+		if ((buf = malloc(ntohl(cuttext->len))) == NULL) {
+			fprintf(stderr, "fbvnc: failed to allocate cuttext buffer\n");
+			return -1;
+		}
+		vread(fd, buf, ntohl(cuttext->len));
+		cut_copy(buf, ntohl(cuttext->len));
+		free(buf);
 		break;
 	case VNC_SETCOLORMAPENTRIES:
 		vread(fd, msg + 1, sizeof(*colormap) - 1);
-		vread(fd, msg, ntohs(colormap->n) * 3 * 2);
+		if ((buf = malloc(ntohl(cuttext->len) * 3 * 2)) == NULL) {
+			fprintf(stderr, "fbvnc: failed to allocate colormap buffer\n");
+			return -1;
+		}
+		vread(fd, buf, ntohs(colormap->n) * 3 * 2);
+		free(buf);
 		break;
 	default:
 		fprintf(stderr, "fbvnc: unknown vnc msg %d\n", msg[0]);
@@ -540,15 +583,42 @@ static void nodraw_set(int val)
 static int kbd_event(int fd, int kbdfd)
 {
 	char key[1024];
-	int i, nr;
+	int i, j, nr;
+	/* character sequences after \x1b \x5b */
+	struct emap {
+		char *seq;
+		int key;
+	} emap[] = {
+		{"\x32\x7e", 0xff63},		/* insert */
+		{"\x31\x7e", 0xff50},		/* home */
+		{"\x34\x7e", 0xff57},		/* end */
+		{"\x35\x7e", 0xff55},		/* page up */
+		{"\x36\x7e", 0xff56},		/* page down */
+		{"\x44\x12", 0xff51},		/* left */
+		{"\x41", 0xff52},		/* up */
+		{"\x43", 0xff53},		/* right */
+		{"\x42", 0xff54},		/* down */
+		{"\x5b\x41", 0xffbe},		/* f1 */
+		{"\x5b\x42", 0xffbf},		/* f2 */
+		{"\x5b\x43", 0xffc0},		/* f3 */
+		{"\x5b\x44", 0xffc1},		/* f4 */
+		{"\x5b\x45", 0xffc2},		/* f5 */
+		{"\x31\x37\x7e", 0xffc3},	/* f6 */
+		{"\x31\x38\x7e", 0xffc4},	/* f7 */
+		{"\x31\x39\x7e", 0xffc5},	/* f8 */
+		{"\x32\x30\x7e", 0xffc6},	/* f9 */
+		{"\x32\x31\x7e", 0xffc7},	/* f10 */
+		{"\x32\x33\x7e", 0xffc8},	/* f11 */
+		{"\x32\x34\x7e", 0xffc9},	/* f12 */
+	};
 
-	if ((nr = read(kbdfd, key, sizeof(key))) <= 0 )
+	if ((nr = read(kbdfd, key, sizeof(key))) <= 0)
 		return -1;
 	for (i = 0; i < nr; i++) {
 		int k = -1;
 		int mod[4];
 		int nmod = 0;
-		switch (key[i]) {
+		switch ((unsigned char) key[i]) {
 		case 0x08:
 		case 0x7f:
 			k = 0xff08;
@@ -557,19 +627,21 @@ static int kbd_event(int fd, int kbdfd)
 			k = 0xff09;
 			break;
 		case 0x1b:
-			if (i + 2 < nr && key[i + 1] == '[') {
-				if (key[i + 2] == 'A')
-					k = 0xff52;
-				if (key[i + 2] == 'B')
-					k = 0xff54;
-				if (key[i + 2] == 'C')
-					k = 0xff53;
-				if (key[i + 2] == 'D')
-					k = 0xff51;
-				if (key[i + 2] == 'H')
-					k = 0xff50;
-				if (k > 0) {
-					i += 2;
+			/* wait some more if the first character is escape */
+			if (nr - i < 5) {
+				struct pollfd ufds[1] = {{.fd = kbdfd, .events = POLLIN}};
+				if (poll(ufds, 1, 20) == 1 && ufds[0].revents & POLLIN)
+					nr += read(kbdfd, key + nr, LEN(key) - nr);
+			}
+			if (i + 1 < nr && (unsigned char) key[i + 1] == 0x5b) {
+				for (j = 0; j < LEN(emap); j++) {
+					int elen = strlen(emap[j].seq);
+					if (i + 1 + elen <= nr && memcmp(emap[j].seq, key + i + 2, elen) == 0)
+						break;
+				}
+				if (j < LEN(emap)) {
+					k = emap[j].key;
+					i += strlen(emap[j].seq) + 1;
 					break;
 				}
 			}
@@ -584,8 +656,8 @@ static int kbd_event(int fd, int kbdfd)
 		case 0x0d:
 			k = 0xff0d;
 			break;
-		case 0x0:	/* c-space: stop/start drawing */
-			nodraw_set(1 - nodraw);
+		case 0x0:	/* c-space */
+			cut_send(fd);
 		default:
 			k = (unsigned char) key[i];
 		}
@@ -691,11 +763,14 @@ int main(int argc, char * argv[])
 		case 'e':
 			enc = atoi(argv[i][2] ? argv[i] + 2 : argv[++i]);
 			break;
-		}
-		if (argv[i][1] == 'h') {
+		case 'c':
+			cut_file = argv[i][2] ? argv[i] + 2 : argv[++i];
+			break;
+		default:
 			printf("Usage: %s [options] [host] [port]\n\n", argv[0]);
 			printf("Options:\n");
-			printf("  -e enc  RFB encoding (0: raw, 2: rre, 6: zlib, 16: zrle)\n");
+			printf("  -e enc    RFB encoding (0: raw, 2: rre, 6: zlib, 16: zrle)\n");
+			printf("  -c path   copy text file\n");
 			return 0;
 		}
 	}
