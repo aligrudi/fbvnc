@@ -28,7 +28,7 @@ When using fbvnc with fbpad, it is usually a good idea to list the tag
 in which fbvnc is run in TAGS_SAVED (the scrsnap feature), so that
 when switching back to the tag, its old contents are shown.  Also, it
 is possible to disable drawing when switching from the terminal in
-which fbvnc is run, and to enable it when switching back (instead of
-using ctrl-space manually each time).  To do so, execute the shell in
-fbpad using m-; (not the usual m-c), to enable terminal switching
-signals.
+which fbvnc is run, and to enable it when switching back (this
+prevents screen updates by fbvnc, when another terminal is shown).
+To do so, execute the shell in fbpad using m-; (not the usual m-c), to
+enable terminal switching signals.
