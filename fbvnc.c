@@ -56,7 +56,8 @@ static int nodraw_ref;		/* pending screen redraw */
 static long vnc_nr;		/* number of bytes received */
 static long vnc_nw;		/* number of bytes sent */
 static char *rfb;		/* remote framebuffer contents */
-static char *cut_file;		/* clipboard path */
+static char *icut;		/* incoming cut text file */
+static char *ocut;		/* outgoing cut text file */
 
 static z_stream z_str;
 static char *z_out;
@@ -437,9 +438,9 @@ static int readrect(int fd)
 	return 0;
 }
 
-static int cut_copy(char *buf, int len)
+static int icut_copy(char *buf, int len)
 {
-	int fd = cut_file != NULL ? open(cut_file, O_WRONLY | O_TRUNC | O_CREAT, 0x600) : -1;
+	int fd = icut != NULL ? open(icut, O_WRONLY | O_TRUNC | O_CREAT, 0x600) : -1;
 	if (fd >= 0) {
 		write(fd, buf, len);
 		close(fd);
@@ -448,10 +449,10 @@ static int cut_copy(char *buf, int len)
 	return 1;
 }
 
-static int cut_send(int fd)
+static int ocut_copy(int fd)
 {
 	char buf[4096];
-	int cfd = cut_file != NULL ? open(cut_file, O_RDONLY) : -1;
+	int cfd = ocut != NULL ? open(ocut, O_RDONLY) : -1;
 	if (cfd >= 0) {
 		struct vnc_cuttext ct = {VNC_CLIENTCUTTEXT};
 		int len = read(cfd, buf, sizeof(buf));
@@ -493,7 +494,7 @@ static int vnc_event(int fd)
 			return -1;
 		}
 		vread(fd, buf, ntohl(cuttext->len));
-		cut_copy(buf, ntohl(cuttext->len));
+		icut_copy(buf, ntohl(cuttext->len));
 		free(buf);
 		break;
 	case VNC_SETCOLORMAPENTRIES:
@@ -657,7 +658,7 @@ static int kbd_event(int fd, int kbdfd)
 			k = 0xff0d;
 			break;
 		case 0x0:	/* c-space */
-			cut_send(fd);
+			ocut_copy(fd);
 		default:
 			k = (unsigned char) key[i];
 		}
@@ -763,13 +764,17 @@ int main(int argc, char * argv[])
 		case 'e':
 			enc = atoi(argv[i][2] ? argv[i] + 2 : argv[++i]);
 			break;
-		case 'c':
-			cut_file = argv[i][2] ? argv[i] + 2 : argv[++i];
+		case 'i':
+			icut = argv[i][2] ? argv[i] + 2 : argv[++i];
+			break;
+		case 'o':
+			ocut = argv[i][2] ? argv[i] + 2 : argv[++i];
 			break;
 		default:
 			printf("Usage: %s [options] [host] [port]\n\n", argv[0]);
 			printf("Options:\n");
-			printf("  -c path   cut text file\n");
+			printf("  -i path   incoming cut text file\n");
+			printf("  -o path   outgoing cut text file\n");
 			printf("  -e enc    RFB encoding (0: raw, 2: rre, 6: zlib, 16: zrle)\n");
 			return 0;
 		}

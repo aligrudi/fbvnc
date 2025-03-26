@@ -18,11 +18,11 @@ Fbvnc stops updating the screen when it receives the SIGUSR1 signal.
 If it receives SIGUSR2 after that, it continues updating the screen as
 usual.
 
-To copy text between the server and the client, it is necessary to
-specify the address of a file with the -c option.  When the VNC server
-sends a cut text message (probably when some text is selected), the
-text is written to this file.  Also, when ctrl-space is pressed, the
-contents of this file is sent to the server via a cut text message.
+To access copied text from the server, the -i option must be given to
+fbvnc.  When the VNC server sends a cut text message (probably when
+some text is selected), the text is written to file specified as the
+argument of -i.  Also, when ctrl-space is pressed, the contents of the
+file specified with -o is sent to the server via a cut text message.
 
 When using fbvnc with fbpad, it is usually a good idea to list the tag
 in which fbvnc is run in TAGS_SAVED (the scrsnap feature), so that
