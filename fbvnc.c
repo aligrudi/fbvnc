@@ -572,15 +572,6 @@ static void showmsg(void)
 	fflush(stdout);
 }
 
-static void nodraw_set(int val)
-{
-	if (val && !nodraw)
-		showmsg();
-	if (!val && nodraw)
-		nodraw_ref = 1;
-	nodraw = val;
-}
-
 static int kbd_event(int fd, int kbdfd)
 {
 	char key[1024];
@@ -744,10 +735,11 @@ static void mainloop(int vnc_fd, int kbd_fd, int rat_fd)
 
 static void signalreceived(int sig)
 {
-	if (sig == SIGUSR1 && !nodraw)		/* disable drawing */
-		nodraw_set(1);
-	if (sig == SIGUSR2 && nodraw)		/* enable drawing */
-		nodraw_set(0);
+	nodraw = sig == SIGUSR1;
+	if (sig == SIGUSR1)		/* disable drawing */
+		showmsg();
+	if (sig == SIGUSR2)		/* enable drawing */
+		nodraw_ref = 1;
 }
 
 int main(int argc, char * argv[])
@@ -779,6 +771,14 @@ int main(int argc, char * argv[])
 			return 0;
 		}
 	}
+	/* handle terminal switching signals */
+	signal(SIGUSR1, signalreceived);
+	signal(SIGUSR2, signalreceived);
+	if (getenv("TERM_PGID") != NULL && atoi(getenv("TERM_PGID")) == getppid()) {
+		if (tcsetpgrp(0, getppid()) == 0)
+			setpgid(0, getppid());
+	}
+	/* connect to the server */
 	if (argv[i] && strcmp("-", argv[i]))
 		host = argv[i];
 	if (argv[i] && argv[i + 1])
@@ -804,18 +804,12 @@ int main(int argc, char * argv[])
 		fprintf(stderr, "fbvnc: failed to allocate rfb\n");
 		return 1;
 	}
-	if (getenv("TERM_PGID") != NULL && atoi(getenv("TERM_PGID")) == getppid()) {
-		if (tcsetpgrp(0, getppid()) == 0)
-			setpgid(0, getppid());
-	}
 	term_setup(&ti);
 
 	/* entering intellimouse for using mouse wheel */
 	rat_fd = open("/dev/input/mice", O_RDWR);
 	write(rat_fd, "\xf3\xc8\xf3\x64\xf3\x50", 6);
 	read(rat_fd, buf, 1);
-	signal(SIGUSR1, signalreceived);
-	signal(SIGUSR2, signalreceived);
 
 	mainloop(vnc_fd, 0, rat_fd);
 
