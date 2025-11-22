@@ -440,7 +440,7 @@ static int readrect(int fd)
 
 static int icut_copy(char *buf, int len)
 {
-	int fd = icut != NULL ? open(icut, O_WRONLY | O_TRUNC | O_CREAT, 0x600) : -1;
+	int fd = icut != NULL ? open(icut, O_WRONLY | O_TRUNC | O_CREAT, 0600) : -1;
 	if (fd >= 0) {
 		write(fd, buf, len);
 		close(fd);
