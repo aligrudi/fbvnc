@@ -586,7 +586,7 @@ static int kbd_event(int fd, int kbdfd)
 		{"\x34\x7e", 0xff57},		/* end */
 		{"\x35\x7e", 0xff55},		/* page up */
 		{"\x36\x7e", 0xff56},		/* page down */
-		{"\x44\x12", 0xff51},		/* left */
+		{"\x44", 0xff51},		/* left */
 		{"\x41", 0xff52},		/* up */
 		{"\x43", 0xff53},		/* right */
 		{"\x42", 0xff54},		/* down */
