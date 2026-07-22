@@ -59,6 +59,10 @@ static char *rfb;		/* remote framebuffer contents */
 static char *icut;		/* incoming cut text file */
 static char *ocut;		/* outgoing cut text file */
 
+static int alock_key, alock;	/* alt lock */
+static int clock_key, clock;	/* control lock */
+static int slock_key, slock;	/* super lock */
+
 static z_stream z_str;
 static char *z_out;
 static int z_outlen;
@@ -607,9 +611,41 @@ static int kbd_event(int fd, int kbdfd)
 	if ((nr = read(kbdfd, key, sizeof(key))) <= 0)
 		return -1;
 	for (i = 0; i < nr; i++) {
+		int c = (unsigned char) key[i];
 		int k = -1;
 		int mod[4];
 		int nmod = 0;
+		if (alock) {
+			alock = 0;
+			if (c != alock_key)
+				mod[nmod++] = 0xffe9;
+		} else if (alock_key && c == alock_key) {
+			alock = 1;
+			continue;
+		}
+		if (clock) {
+			clock = 0;
+			if (c == ' ') {
+				press(fd, 0xffe3, 1);
+				press(fd, 0xffe4, 1);
+				press(fd, 0xffe4, 0);
+				press(fd, 0xffe3, 0);
+				continue;
+			}
+			if (c != clock_key)
+				mod[nmod++] = 0xffe3;
+		} else if (clock_key && c == clock_key) {
+			clock = 1;
+			continue;
+		}
+		if (slock) {
+			slock = 0;
+			if (c != slock_key)
+				mod[nmod++] = 0xffeb;
+		} else if (slock_key && c == slock_key) {
+			slock = 1;
+			continue;
+		}
 		switch ((unsigned char) key[i]) {
 		case 0x08:
 		case 0x7f:
@@ -762,12 +798,24 @@ int main(int argc, char * argv[])
 		case 'o':
 			ocut = argv[i][2] ? argv[i] + 2 : argv[++i];
 			break;
+		case 'a':
+			alock_key = (unsigned char) (argv[i][2] ? argv[i][2] : argv[++i][0]);
+			break;
+		case 'c':
+			clock_key = (unsigned char) (argv[i][2] ? argv[i][2] : argv[++i][0]);
+			break;
+		case 's':
+			slock_key = (unsigned char) (argv[i][2] ? argv[i][2] : argv[++i][0]);
+			break;
 		default:
 			printf("Usage: %s [options] [host] [port]\n\n", argv[0]);
 			printf("Options:\n");
 			printf("  -i path   incoming cut text file\n");
 			printf("  -o path   outgoing cut text file\n");
 			printf("  -e enc    RFB encoding (0: raw, 2: rre, 6: zlib, 16: zrle)\n");
+			printf("  -a key    alt lock key\n");
+			printf("  -c key    control lock key\n");
+			printf("  -s key    super lock key\n");
 			return 0;
 		}
 	}
