@@ -625,13 +625,6 @@ static int kbd_event(int fd, int kbdfd)
 		}
 		if (clock) {
 			clock = 0;
-			if (c == ' ') {
-				press(fd, 0xffe3, 1);
-				press(fd, 0xffe4, 1);
-				press(fd, 0xffe4, 0);
-				press(fd, 0xffe3, 0);
-				continue;
-			}
 			if (c != clock_key)
 				mod[nmod++] = 0xffe3;
 		} else if (clock_key && c == clock_key) {
