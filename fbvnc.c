@@ -1,7 +1,7 @@
 /*
  * FBVNC: a small Linux framebuffer VNC viewer
  *
- * Copyright (C) 2009-2025 Ali Gholami Rudi
+ * Copyright (C) 2009-2026 Ali Gholami Rudi
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -59,9 +59,10 @@ static char *rfb;		/* remote framebuffer contents */
 static char *icut;		/* incoming cut text file */
 static char *ocut;		/* outgoing cut text file */
 
-static int alock_key, alock;	/* alt lock */
-static int clock_key, clock;	/* control lock */
-static int slock_key, slock;	/* super lock */
+/* modifier locks: alt, control, shift, super */
+static int lock_code[4] = {0xffe9, 0xffe3, 0xffe1, 0xffeb};
+static int lock_active[4];	/* modifier lock is active */
+static int lock_key[4];		/* key assigned to the modifier */
 
 static z_stream z_str;
 static char *z_out;
@@ -517,8 +518,43 @@ static int vnc_event(int fd)
 	return 0;
 }
 
+static int press(int fd, int key, int down)
+{
+	struct vnc_keyevent ke = {VNC_KEYEVENT};
+	ke.key = htonl(key);
+	ke.down = down;
+	vwrite(fd, &ke, sizeof(ke));
+	return 0;
+}
+
+static int lock_update(int key)
+{
+	int i;
+	for (i = 0; i < LEN(lock_code); i++) {
+		if (!lock_active[i] && lock_key[i] && lock_key[i] == key) {
+			lock_active[i] = 1;
+			return 1;
+		}
+		if (lock_active[i] && lock_key[i] == key)
+			lock_active[i] = 0;
+	}
+	return 0;
+}
+
+static int lock_send(int fd, int down)
+{
+	int i;
+	for (i = 0; i < LEN(lock_code); i++) {
+		if (lock_active[i])
+			press(fd, lock_code[i], down);
+		lock_active[i] = down ? lock_active[i] : 0;
+	}
+	return 0;
+}
+
 static int rat_event(int fd, int ratfd)
 {
+	static int mask_old;
 	char ie[4] = {0};
 	struct vnc_pointerevent me = {VNC_POINTEREVENT};
 	int mask = 0;
@@ -551,22 +587,17 @@ static int rat_event(int fd, int ratfd)
 		mask |= VNC_BUTTON4_MASK;
 	if (ie[3] < 0)		/* wheel down */
 		mask |= VNC_BUTTON5_MASK;
-
 	me.y = htons(mr);
 	me.x = htons(mc);
 	me.mask = mask;
+	if ((mask & 7) && !(mask_old & 7))
+		lock_send(fd, 1);
 	vwrite(fd, &me, sizeof(me));
+	if (!(mask & 7) && (mask_old & 7))
+		lock_send(fd, 0);
+	mask_old = mask;
 	if (or != or_ || oc != oc_)
 		nodraw_ref = 1;
-	return 0;
-}
-
-static int press(int fd, int key, int down)
-{
-	struct vnc_keyevent ke = {VNC_KEYEVENT};
-	ke.key = htonl(key);
-	ke.down = down;
-	vwrite(fd, &ke, sizeof(ke));
 	return 0;
 }
 
@@ -615,30 +646,8 @@ static int kbd_event(int fd, int kbdfd)
 		int k = -1;
 		int mod[4];
 		int nmod = 0;
-		if (alock) {
-			alock = 0;
-			if (c != alock_key)
-				mod[nmod++] = 0xffe9;
-		} else if (alock_key && c == alock_key) {
-			alock = 1;
+		if (lock_update(c))
 			continue;
-		}
-		if (clock) {
-			clock = 0;
-			if (c != clock_key)
-				mod[nmod++] = 0xffe3;
-		} else if (clock_key && c == clock_key) {
-			clock = 1;
-			continue;
-		}
-		if (slock) {
-			slock = 0;
-			if (c != slock_key)
-				mod[nmod++] = 0xffeb;
-		} else if (slock_key && c == slock_key) {
-			slock = 1;
-			continue;
-		}
 		switch ((unsigned char) key[i]) {
 		case 0x08:
 		case 0x7f:
@@ -690,12 +699,14 @@ static int kbd_event(int fd, int kbdfd)
 		}
 		if (k > 0) {
 			int j;
+			lock_send(fd, 1);
 			for (j = 0; j < nmod; j++)
 				press(fd, mod[j], 1);
 			press(fd, k, 1);
 			press(fd, k, 0);
 			for (j = 0; j < nmod; j++)
 				press(fd, mod[j], 0);
+			lock_send(fd, 0);
 		}
 	}
 	return 0;
@@ -792,13 +803,16 @@ int main(int argc, char * argv[])
 			ocut = argv[i][2] ? argv[i] + 2 : argv[++i];
 			break;
 		case 'a':
-			alock_key = (unsigned char) (argv[i][2] ? argv[i][2] : argv[++i][0]);
+			lock_key[0] = (unsigned char) (argv[i][2] ? argv[i][2] : argv[++i][0]);
 			break;
 		case 'c':
-			clock_key = (unsigned char) (argv[i][2] ? argv[i][2] : argv[++i][0]);
+			lock_key[1] = (unsigned char) (argv[i][2] ? argv[i][2] : argv[++i][0]);
 			break;
 		case 's':
-			slock_key = (unsigned char) (argv[i][2] ? argv[i][2] : argv[++i][0]);
+			lock_key[2] = (unsigned char) (argv[i][2] ? argv[i][2] : argv[++i][0]);
+			break;
+		case 'w':
+			lock_key[3] = (unsigned char) (argv[i][2] ? argv[i][2] : argv[++i][0]);
 			break;
 		default:
 			printf("Usage: %s [options] [host] [port]\n\n", argv[0]);
@@ -808,7 +822,8 @@ int main(int argc, char * argv[])
 			printf("  -e enc    RFB encoding (0: raw, 2: rre, 6: zlib, 16: zrle)\n");
 			printf("  -a key    alt lock key\n");
 			printf("  -c key    control lock key\n");
-			printf("  -s key    super lock key\n");
+			printf("  -s key    shift lock key\n");
+			printf("  -w key    super lock key\n");
 			return 0;
 		}
 	}
